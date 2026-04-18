@@ -1,6 +1,7 @@
 {
     "name": "linwor/tcg-shared-library",
     "description": "Shared functionality for The Courier Guy",
+    "license": "GPL-3.0",
     "autoload": {
         "psr-4": {
             "Linwor\\TcgSharedLibrary\\": "src/"
