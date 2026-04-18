@@ -4,7 +4,7 @@
     "license": "GPL-3.0",
     "autoload": {
         "psr-4": {
-            "Linwor\\TcgSharedLibrary\\": "src/"
+            "Tcg\\TcgShared\\": "src/"
         }
     },
     "authors": [
@@ -13,5 +13,7 @@
             "email": "lindley@appinlet.com"
         }
     ],
-    "require": {}
+    "require": {
+        "php": ">=8.3"
+    }
 }
