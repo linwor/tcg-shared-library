@@ -1,0 +1,16 @@
+{
+    "name": "linwor/tcg-shared-library",
+    "description": "Shared functionality for The Courier Guy",
+    "autoload": {
+        "psr-4": {
+            "Linwor\\TcgSharedLibrary\\": "src/"
+        }
+    },
+    "authors": [
+        {
+            "name": "lindley1",
+            "email": "lindley@appinlet.com"
+        }
+    ],
+    "require": {}
+}
