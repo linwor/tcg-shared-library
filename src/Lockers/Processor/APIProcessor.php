@@ -1,6 +1,6 @@
 <?php
 
-namespace Pudo\Common\Processor;
+namespace Tcg\Common\Lockers\Processor;
 
 class APIProcessor
 {
