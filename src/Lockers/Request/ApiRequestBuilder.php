@@ -1,6 +1,6 @@
 <?php
 
-namespace Pudo\Common\Request;
+namespace Tcg\Common\Lockers\Request;
 
 use stdClass;
 

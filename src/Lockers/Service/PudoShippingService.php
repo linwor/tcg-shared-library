@@ -1,6 +1,6 @@
 <?php
 
-namespace Pudo\Common\Service;
+namespace Tcg\Common\Lockers\Service;
 
 class PudoShippingService
 {
