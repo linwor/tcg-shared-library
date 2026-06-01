@@ -147,23 +147,30 @@ class ShipLogicParcelController
     public function packContainers(array $containers, array $fittingItems): array
     {
         $packedContainers = [];
+
         foreach ($containers as $container) {
-            $containerDimension  = $container->dimension;
-            unset($containerDimension['mass']);
-            unset($containerDimension['volume']);
-            $containerDimension = array_values($containerDimension);
-            rsort($containerDimension);
-            $containerDimension['volume'] = $containerDimension[0] * $containerDimension[1] * $containerDimension[2];
-            // Now we need to try and fit the other items into the container
-            $containerPackingController = new CommonPackingController([$container->dimension]);
-            [$packedContainer, $fittingItems] = $containerPackingController->calculateMultiFittingItems(
-                $fittingItems,
-                true,
-                $container
-            );
-            $packedContainers[] = unserialize(serialize($packedContainer));
-            $fittingItems = unserialize(serialize($fittingItems));
+            if (empty($fittingItems)) {
+                $packedContainers[] = unserialize(serialize($container));
+                $fittingItems       = unserialize(serialize($fittingItems));
+            } else {
+                $containerDimension = $container->dimension;
+                unset($containerDimension['mass']);
+                unset($containerDimension['volume']);
+                $containerDimension = array_values($containerDimension);
+                rsort($containerDimension);
+                $containerDimension['volume'] = $containerDimension[0] * $containerDimension[1] * $containerDimension[2];
+                // Now we need to try and fit the other items into the container
+                $containerPackingController = new CommonPackingController([$container->dimension]);
+                [$packedContainer, $fittingItems] = $containerPackingController->calculateMultiFittingItems(
+                    $fittingItems,
+                    true,
+                    $container
+                );
+                $packedContainers[] = unserialize(serialize($packedContainer));
+                $fittingItems       = unserialize(serialize($fittingItems));
+            }
         }
+
 
         return [$packedContainers, $fittingItems];
     }
