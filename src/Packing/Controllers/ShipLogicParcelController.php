@@ -7,7 +7,7 @@ use App\Models\TcgService;
 use Illuminate\Http\Request;
 use Tcg\Common\Packing\Controllers\CommonPackingController;
 
-class ShipLogicParcelController extends Controller
+class ShipLogicParcelController
 {
     private array $boxes;
     private array $fittingItems;
@@ -19,7 +19,7 @@ class ShipLogicParcelController extends Controller
      */
     public function __construct(array $boxes)
     {
-        $this->boxes       = $boxes;
+        $this->boxes = $boxes;
         // Unset the unused boxes, sort dimensions
         foreach ($this->boxes as $key => $box) {
             $length    = $box['length'] ?? 0.0;
@@ -144,6 +144,30 @@ class ShipLogicParcelController extends Controller
         return $parcels;
     }
 
+    public function packContainers(array $containers, array $fittingItems): array
+    {
+        $packedContainers = [];
+        foreach ($containers as $container) {
+            $containerDimension  = $container->dimension;
+            unset($containerDimension['mass']);
+            unset($containerDimension['volume']);
+            $containerDimension = array_values($containerDimension);
+            rsort($containerDimension);
+            $containerDimension['volume'] = $containerDimension[0] * $containerDimension[1] * $containerDimension[2];
+            // Now we need to try and fit the other items into the container
+            $containerPackingController = new CommonPackingController([$container->dimension]);
+            [$packedContainer, $fittingItems] = $containerPackingController->calculateMultiFittingItems(
+                $fittingItems,
+                true,
+                $container
+            );
+            $packedContainers[] = unserialize(serialize($packedContainer));
+            $fittingItems = unserialize(serialize($fittingItems));
+        }
+
+        return [$packedContainers, $fittingItems];
+    }
+
     /**
      * @param $massBased
      * @param float $totalMass
@@ -195,7 +219,7 @@ class ShipLogicParcelController extends Controller
                 foreach ($massBased as $item) {
                     $remainingItems = $item->quantity;
                     // Mass-based items include those with no dimension data at all - default mass
-                    $itemMass       = $item->dimension['mass'] > 0 ? $item->dimension['mass'] : 0.1;
+                    $itemMass = $item->dimension['mass'] > 0 ? $item->dimension['mass'] : 0.1;
                     if ($itemMass <= 0) {
                         $unplacedItems--;
                         continue;
@@ -300,59 +324,6 @@ class ShipLogicParcelController extends Controller
         $items = array_values($items);
 
         return [$tooBigItems, $items];
-    }
-
-    /**
-     * Optimally pack fitting dimensioned items
-     *
-     * @param array $items
-     *
-     * @return array
-     */
-    private function calculateMultiFittingItems(string $fittingItems): array
-    {
-        if (empty($items)) {
-            return [];
-        }
-        $fits = [];
-
-        foreach ($items as $key1 => $item) {
-            $itemDims = [
-                $item->dimension['length'],
-                $item->dimension['width'],
-                $item->dimension['height'],
-            ];
-
-            foreach ($this->boxes as $key => $box) {
-                $fits[$key][$key1] = $this->commonPackingController->getMaxPackingConfiguration($box, $itemDims);
-            }
-        }
-
-        $tcgPackages = [];
-
-        foreach ($fits as $fitIndex => $fit) {
-            $remainingItems = $this->fittingItems;
-            $results        = [];
-            $anyItemsLeft   = true;
-            while ($anyItemsLeft) {
-                list($r2, $anyItemsLeft, $remainingItems) = $this->commonPackingController->fitItemsInRealBoxes(
-                    $remainingItems,
-                    $fits,
-                    (int)$fitIndex
-                );
-                if ($r2 !== null) {
-                    $results[] = $r2[0];
-                }
-            }
-            if (count($results) === 1) {
-                return $results;
-            }
-            $tcgPackages[$fitIndex] = $results;
-        }
-
-        usort($tcgPackages, self::sort1(...));
-
-        return $tcgPackages[0];
     }
 
     /**

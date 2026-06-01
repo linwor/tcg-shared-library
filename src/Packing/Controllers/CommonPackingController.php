@@ -57,12 +57,13 @@ class CommonPackingController
         return false;
     }
 
-    public function partitionItems(array $items)
+    public function partitionItems(array $items, $containersEnabled = false): array
     {
-        $tooHeavyItems = [];
-        $tooBigItems   = [];
-        $singleItems   = [];
-        $massBased     = [];
+        $tooHeavyItems  = [];
+        $tooBigItems    = [];
+        $singleItems    = [];
+        $massBased      = [];
+        $containerItems = [];
 
         // First, set aside the configured single parcel items
         foreach ($items as $key => $item) {
@@ -108,14 +109,31 @@ class CommonPackingController
         // Next, find any too-heavy items (no-dimensions) and set them aside
         $maxWeight = 0.0;
         foreach ($this->boxes as $box) {
-            if ($box['max_weight'] > $maxWeight) {
-                $maxWeight = $box['max_weight'];
+            if (($box['max_weight'] ?? 0.0) > $maxWeight) {
+                $maxWeight = $box['max_weight'] ?? 0.0;
             }
         }
-        foreach ($items as $key => $item) {
-            if ($item->dimension['mass'] > $maxWeight) {
-                $tooHeavyItems[] = $item;
-                unset($items[$key]);
+        if ($maxWeight > 0) {
+            foreach ($items as $key => $item) {
+                if ($item->dimension['mass'] > $maxWeight) {
+                    $tooHeavyItems[] = $item;
+                    unset($items[$key]);
+                }
+            }
+        }
+
+        // Next, identify any container items and set them apart
+        if ($containersEnabled) {
+            foreach ($items as $key => $item) {
+                $isContainer = $item->options['is_container'];
+                if ($isContainer) {
+                    $quantity = $item->quantity;
+                    for ($i = 0; $i < $quantity; $i++) {
+                        $item->quantity   = 1;
+                        $containerItems[] = $item;
+                    }
+                    unset($items[$key]);
+                }
             }
         }
 
@@ -129,7 +147,7 @@ class CommonPackingController
         }
 
         // Whatever is left are dimensioned items that fit into at least one box
-        return [$tooHeavyItems, $tooBigItems, $singleItems, $massBased, $items];
+        return [$tooHeavyItems, $tooBigItems, $singleItems, $massBased, $containerItems, $items];
     }
 
     /**
@@ -150,6 +168,10 @@ class CommonPackingController
         ];
         if (isset($box['dimension'])) {
             $box = array_values($box['dimension']);
+        } else {
+            unset($box['mass']);
+            unset($box['volume']);
+            $box = array_values($box);
         }
         $maxItems = 0;
         foreach ($boxPermutations as $boxPermutation) {
@@ -162,7 +184,7 @@ class CommonPackingController
         return $maxItems;
     }
 
-    public function calculateMultiFittingItems(array $fittingItems): array
+    public function calculateMultiFittingItems(array $fittingItems, $isContainer = false, $container = null): array
     {
         if (empty($fittingItems)) {
             return [];
@@ -183,11 +205,11 @@ class CommonPackingController
 
         $tcgPackages = [];
 
-        foreach ($fits as $fitIndex => $fit) {
-            $remainingItems = unserialize(serialize($fittingItems));
-            $results        = [];
-            $anyItemsLeft   = true;
-            while ($anyItemsLeft) {
+        if ($isContainer && $container !== null) {
+            $container = unserialize(serialize($container));
+            foreach ($fits as $fitIndex => $fit) {
+                $remainingItems = unserialize(serialize($fittingItems));
+                $results        = [];
                 list($r2, $anyItemsLeft, $remainingItems) = $this->fitItemsInRealBoxes(
                     $remainingItems,
                     $fits,
@@ -196,16 +218,37 @@ class CommonPackingController
                 if ($r2 !== null) {
                     $results[] = $r2[0];
                 }
+                $container->price             += $results[$key]['value'];
+                $container->dimension['mass'] = (float)$container->dimension['mass'] + $results[$key]['mass'];
+
+
+                return [$container, $remainingItems];
             }
-            if (count($results) === 1) {
-                return $results;
+        } else {
+            foreach ($fits as $fitIndex => $fit) {
+                $remainingItems = unserialize(serialize($fittingItems));
+                $results        = [];
+                $anyItemsLeft   = true;
+                while ($anyItemsLeft) {
+                    list($r2, $anyItemsLeft, $remainingItems) = $this->fitItemsInRealBoxes(
+                        $remainingItems,
+                        $fits,
+                        (int)$fitIndex
+                    );
+                    if ($r2 !== null) {
+                        $results[] = $r2[0];
+                    }
+                }
+                if (count($results) === 1) {
+                    return $results;
+                }
+                $tcgPackages[$fitIndex] = $results;
             }
-            $tcgPackages[$fitIndex] = $results;
+
+            usort($tcgPackages, self::sort1(...));
+
+            return $tcgPackages[0];
         }
-
-        usort($tcgPackages, self::sort1(...));
-
-        return $tcgPackages[0];
     }
 
 
@@ -341,9 +384,9 @@ class CommonPackingController
             $entry['item']        = $j;
             $entry['description'] = $item->description;
             $entry['pieces']      = 1;
-            $entry['length']      = $box['dimension']['length'];
-            $entry['width']       = $box['dimension']['width'];
-            $entry['height']      = $box['dimension']['height'];
+            $entry['length']      = $box['dimension']['length'] ?? $box['length'];
+            $entry['width']       = $box['dimension']['width'] ?? $box['width'];
+            $entry['height']      = $box['dimension']['height'] ?? $box['height'];
             $entry['mass']        = 0.0;
             $entry['value']       = 0;
 
@@ -425,9 +468,9 @@ class CommonPackingController
             $boxWidth  = $box['dimension']['width'];
             $boxHeight = $box['dimension']['height'];
         } else {
-            $boxLength = $box[0];
-            $boxWidth  = $box[1];
-            $boxHeight = $box[2];
+            $boxLength = $box[0] ?? $box['length'];
+            $boxWidth  = $box[1] ?? $box['width'];
+            $boxHeight = $box[2] ?? $box['height'];
         }
 
         $usedHeight = $boxHeight;
