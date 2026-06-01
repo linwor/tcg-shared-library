@@ -209,17 +209,19 @@ class CommonPackingController
             $container = unserialize(serialize($container));
             foreach ($fits as $fitIndex => $fit) {
                 $remainingItems = unserialize(serialize($fittingItems));
-                $results        = [];
+                $result        = [];
                 list($r2, $anyItemsLeft, $remainingItems) = $this->fitItemsInRealBoxes(
                     $remainingItems,
                     $fits,
                     (int)$fitIndex
                 );
                 if ($r2 !== null) {
-                    $results[] = $r2[0];
+                    $result = $r2[0];
                 }
-                $container->price             += $results[$key]['value'];
-                $container->dimension['mass'] = (float)$container->dimension['mass'] + $results[$key]['mass'];
+                if (!empty($result)) {
+                    $container->price             += $result['value']?? 0.0;
+                    $container->dimension['mass'] = (float)$container->dimension['mass'] + ($result['mass'] ?? 0.0);
+                }
 
 
                 return [$container, $remainingItems];
