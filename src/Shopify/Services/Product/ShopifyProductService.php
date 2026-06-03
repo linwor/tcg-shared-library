@@ -4,10 +4,14 @@ namespace Tcg\Common\Shopify\Services\Product;
 
 use App\Models\ProductDimension;
 use Exception;
+use Illuminate\Support\Facades\Http;
 use Illuminate\Support\Facades\Log;
 use Illuminate\Support\Facades\DB;
 use Shopify\Clients\Graphql;
 use Shopify\Exception\MissingArgumentException;
+
+use function App\Services\Product\logger;
+use function App\Services\Product\now;
 
 class ShopifyProductService
 {
@@ -19,24 +23,21 @@ class ShopifyProductService
      */
     public static function getAllProducts($session, $shop): array
     {
-        $products    = [];
-        $hasNextPage = true;
-        $endCursor   = null;
+        $products = [];
 
         $client = new Graphql($shop, $session->getAccessToken());
 
-        while ($hasNextPage) {
-            try {
-                // Build GraphQL query
-                $query = <<<'GRAPHQL'
-                query getProducts($cursor: String, $variantCursor: String) {
-                    products(first: 100, after: $cursor) {
-                        edges {
-                            node {
-                                id
-                                title
-                                handle
-                                variants(first: 100, after: $variantCursor) {
+        $bulkQueryMutation = <<<'GRAPHQL'
+mutation {
+  bulkOperationRunQuery(
+   query: """
+    {
+      products {
+        edges {
+          node {
+            id
+            title
+            variants {
                                     edges {
                                         node {
                                             id
@@ -58,41 +59,97 @@ class ShopifyProductService
                                         endCursor
                                     }
                                 }
-                            }
-                        }
-                        pageInfo {
-                            hasNextPage
-                            endCursor
-                        }
-                    }
-                }
-                GRAPHQL;
+          }
+        }
+      }
+    }
+    """
+  ) {
+    bulkOperation {
+      id
+      status
+    }
+    userErrors {
+      field
+      message
+    }
+  }
+}
+GRAPHQL;
+        $response          = $client->query([
+            'query' => $bulkQueryMutation,
+        ]);
+        $result            = $response->getDecodedBody();
 
-                // Send request using Shopify GraphQL client
-                $response = $client->query([
-                    'query' => $query,
-                    'variables' => [
-                        'cursor' => $endCursor
-                    ]
-                ]);
+        $bulkOperationQuery = <<<'GRAPHQL'
+{
+currentBulkOperation {
+    id
+    status
+    errorCode
+    createdAt
+    completedAt
+    objectCount
+    fileSize
+    url
+    partialDataUrl
+  }
+  }
+GRAPHQL;
+        $completed          = false;
+        while (!$completed) {
+            $response = $client->query([
+                'query' => $bulkOperationQuery,
+            ]);
+            $body     = $response->getDecodedBody();
+            $status   = $body['data']['currentBulkOperation']['status'] ?? null;
+            if ($status === 'COMPLETED') {
+                $completed = true;
+            } elseif (in_array($status, ['FAILED', 'CANCELED'])) {
+                Log::error("Bulk operation failed with status: $status", ['shop' => $shop]);
 
-                $body = $response->getDecodedBody();
+                return [];
+            } else {
+                Log::info("Bulk operation status: $status. Waiting for completion...", ['shop' => $shop]);
+                sleep(5); // Wait before polling again
+            }
+        }
 
-                // Handle pagination
-                $productEdges = $body['data']['products']['edges'] ?? [];
-                foreach ($productEdges as $edge) {
-                    $products[] = $edge['node'];
-                }
+        $url = $body['data']['currentBulkOperation']['url'] ?? null;
+        if (!$url) {
+            Log::error("Bulk operation completed but no URL found for results.", ['shop' => $shop]);
 
-                $pageInfo    = $body['data']['products']['pageInfo'] ?? [];
-                $hasNextPage = $pageInfo['hasNextPage'] ?? false;
-                $endCursor   = $pageInfo['endCursor'] ?? null;
-            } catch (Exception $e) {
-                Log::error('Error fetching products via GraphQL: ' . $e->getMessage(), [
-                    'shop' => $shop,
-                    'endCursor' => $endCursor
-                ]);
-                break;
+            return [];
+        }
+
+        $response = Http::timeout(300)->get($url);
+        if (!$response->successful()) {
+            Log::error("Failed to download bulk operation results from URL: $url", [
+                'shop'   => $shop,
+                'status' => $response->status(),
+                'body'   => $response->body()
+            ]);
+
+            return [];
+        }
+        $lines = explode("\n", $response->body());
+        foreach ($lines as $line) {
+            if (trim($line) === '') {
+                continue;
+            }
+            $product = json_decode($line, true);
+            if (str_contains($product['id'] ?? '', 'gid://shopify/Product/')) {
+                $product['product_id'] = str_replace('gid://shopify/Product/', '', $product['id']);
+                $product['variants']   = []; // Initialize variants structure
+                $products[]            = $product;
+            } elseif (str_contains($product['id'] ?? '', 'gid://shopify/ProductVariant/')) {
+                $prod                           = $products[count($products) - 1];
+                $product['product_id']          = $prod['product_id'];
+                $product['variant_id']          = str_replace('gid://shopify/ProductVariant/', '', $product['id']);
+                $prod['variants'][]             = $product;
+                $products[count($products) - 1] = $prod; // Update the last product with its variants
+            } else {
+                Log::warning("Unexpected line in bulk operation results: " . $line, ['shop' => $shop]);
             }
         }
 
@@ -107,29 +164,36 @@ class ShopifyProductService
      */
     public static function saveProductDimensions($products, $shop): void
     {
-        // Get existing dims keyed by "productId-variantId" for fast lookup
-        $existingDimensions = ProductDimension::where('shop', $shop)
-                                              ->get()
-                                              ->keyBy(function ($item) {
-                                                  return $item->product_id . '-' . $item->variant_id;
-                                              });
-
-        $existingKeys    = $existingDimensions->keys()->toArray();
         $newKeys         = [];
         $recordsToInsert = [];
         $recordsToUpdate = [];
+        $existingKeys    = [];
+        $existingRecords    = [];
+        DB::table('product_dimensions')
+          ->select('id')
+          ->selectRaw(
+              "MD5(
+                                                   CONCAT(product_title, '-', variant_title , '-', sku, '-',
+            grams)) as `hash`"
+          )
+          ->selectRaw("CONCAT(product_id, '-', variant_id) as `key`")
+          ->orderBy('id')->chunkById(100, function ($records) use (&$existingKeys, &$existingRecords) {
+                $mapped = $records->mapWithKeys(function ($item) {
+                    return [
+                        $item->key => [
+                            'id'   => $item->id,
+                            'hash' => $item->hash,
+                        ]
+                    ];
+                })->toArray();
+                $existingRecords = array_merge($existingRecords ?? [], $mapped);
+                $existingKeys = array_merge($existingKeys, array_keys($mapped));
+          });
 
         foreach ($products as $product) {
-            if (!isset($product['variants']['edges']) || !is_array($product['variants']['edges'])) {
-                Log::error("Missing 'variants.edges' structure in product data.", ['product_data' => $product]);
-                continue;
-            }
-
-            foreach ($product['variants']['edges'] as $edge) {
-                $variant   = $edge['node'] ?? [];
-                $productId = $product['id'] ? self::extractId($product['id']) : null;
-                $variantId = $variant['id'] ? self::extractId($variant['id']) : null;
-
+            $productId = $product['product_id'];
+            foreach ($product['variants'] ?? [] as $variant) {
+                $variantId = $variant['variant_id'];
                 if (!$productId || !$variantId) {
                     Log::error("Product ID or Variant ID is missing.", ['product_data' => $product]);
                     continue;
@@ -163,28 +227,29 @@ class ShopifyProductService
                 }
 
                 // Check if record exists
-                if ($existingDimensions->has($key)) {
-                    // Prepare for batch update - only include fields we want to update
-                    $existingRecord = $existingDimensions->get($key);
-                    $updateData     = [];
+                if (in_array($key, $existingKeys)) {
+                    $id         = $existingRecords[$key]['id'];
+                    $hash       = $existingRecords[$key]['hash'];
+                    $newHash    = md5(
+                        implode('-', [
+                            $data['product_title'] ?? '',
+                            $data['variant_title'] ?? '',
+                            $data['sku'] ?? '',
+                            $data['grams'] ?? '',
+                        ])
+                    );
+                    $updateData = [];
 
-                    // Only add fields that have changed to minimize updates
-                    if ($existingRecord->product_title !== $data['product_title']) {
+                    if ($hash !== $newHash) {
                         $updateData['product_title'] = $data['product_title'];
-                    }
-                    if ($existingRecord->variant_title !== $data['variant_title']) {
                         $updateData['variant_title'] = $data['variant_title'];
-                    }
-                    if ($existingRecord->sku !== $data['sku']) {
-                        $updateData['sku'] = $data['sku'];
-                    }
-                    if (isset($data['grams']) && $existingRecord->grams != $data['grams']) {
-                        $updateData['grams'] = $data['grams'];
+                        $updateData['sku']           = $data['sku'];
+                        $updateData['grams']         = $data['grams'];
                     }
 
                     if (!empty($updateData)) {
-                        $updateData['updated_at']             = now();
-                        $recordsToUpdate[$existingRecord->id] = $updateData;
+                        $updateData['updated_at'] = now();
+                        $recordsToUpdate[$id]     = $updateData;
                     }
                 } else {
                     // Prepare for batch insert
@@ -214,53 +279,7 @@ class ShopifyProductService
         if (!empty($keysToDelete)) {
             $idsToDelete = [];
             foreach ($keysToDelete as $key) {
-                [$productId, $variantId] = explode('-', $key);
-                $record = $existingDimensions->get($key);
-                if ($record) {
-                    $idsToDelete[] = $record->id;
-                }
-            }
-
-            if (!empty($idsToDelete)) {
-                ProductDimension::whereIn('id', $idsToDelete)->delete();
-            }
-        }
-
-        // Remove duplicate records more efficiently
-        $duplicateKeys = array_intersect($existingKeys, $newKeys);
-        if (!empty($duplicateKeys)) {
-            $productVariantPairs = [];
-            foreach ($duplicateKeys as $key) {
-                [$productId, $variantId] = explode('-', $key);
-                $productVariantPairs[] = ['product_id' => $productId, 'variant_id' => $variantId];
-            }
-
-            // Find all duplicates in a single query
-            $allDuplicates = ProductDimension::where('shop', $shop)
-                                             ->where(function ($query) use ($productVariantPairs) {
-                                                 foreach ($productVariantPairs as $pair) {
-                                                     $query->orWhere(function ($subQuery) use ($pair) {
-                                                         $subQuery->where('product_id', $pair['product_id'])
-                                                                  ->where('variant_id', $pair['variant_id']);
-                                                     });
-                                                 }
-                                             })
-                                             ->orderBy('product_id')
-                                             ->orderBy('variant_id')
-                                             ->orderByDesc('updated_at')
-                                             ->get();
-
-            // Group by product_id-variant_id and keep only the most recent
-            $grouped = $allDuplicates->groupBy(function ($item) {
-                return $item->product_id . '-' . $item->variant_id;
-            });
-
-            $idsToDelete = [];
-            foreach ($grouped as $group) {
-                if ($group->count() > 1) {
-                    // Skip the first (most recent) and mark the rest for deletion
-                    $idsToDelete = array_merge($idsToDelete, $group->slice(1)->pluck('id')->toArray());
-                }
+                $idsToDelete[] = $existingRecords[$key]['id'];
             }
 
             if (!empty($idsToDelete)) {
@@ -319,7 +338,7 @@ class ShopifyProductService
 
         try {
             $response = $client->query([
-                'query' => $query,
+                'query'     => $query,
                 'variables' => ['ids' => $globalVariantIds],
             ]);
 
@@ -329,6 +348,7 @@ class ShopifyProductService
             return $decoded['data']['nodes'] ?? [];
         } catch (\Exception $e) {
             logger()->error('Shopify getVariantsByIds error: ' . $e->getMessage());
+
             return [];
         }
     }
