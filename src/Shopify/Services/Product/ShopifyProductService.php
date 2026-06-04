@@ -10,9 +10,6 @@ use Illuminate\Support\Facades\DB;
 use Shopify\Clients\Graphql;
 use Shopify\Exception\MissingArgumentException;
 
-use function App\Services\Product\logger;
-use function App\Services\Product\now;
-
 class ShopifyProductService
 {
     /**
@@ -347,7 +344,10 @@ GRAPHQL;
             // Return clean array of variants
             return $decoded['data']['nodes'] ?? [];
         } catch (\Exception $e) {
-            logger()->error('Shopify getVariantsByIds error: ' . $e->getMessage());
+            Log::error('Shopify getVariantsByIds error', [
+                'error' => $e->getMessage(),
+                'ids'   => $variantIds,
+            ]);
 
             return [];
         }
