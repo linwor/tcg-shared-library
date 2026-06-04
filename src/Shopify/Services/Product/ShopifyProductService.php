@@ -344,7 +344,10 @@ GRAPHQL;
             // Return clean array of variants
             return $decoded['data']['nodes'] ?? [];
         } catch (\Exception $e) {
-            Log::error('Shopify getVariantsByIds error: ' . $e->getMessage());
+            Log::error('Shopify getVariantsByIds error', [
+                'error' => $e->getMessage(),
+                'ids'   => $variantIds,
+            ]);
 
             return [];
         }
