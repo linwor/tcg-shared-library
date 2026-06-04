@@ -6,6 +6,9 @@ use Tcg\Common\Models\Product;
 
 class CommonPackingController
 {
+    private const DEFAULT_MASS = 0.5;
+    private const DEFAULT_DIMENSION = 0.1;
+
     private $boxes;
 
     private int $j;
@@ -30,7 +33,7 @@ class CommonPackingController
                 $item->dimension['length'] <= $box['dimension']['length'] &&
                 $item->dimension['width'] <= $box['dimension']['width'] &&
                 $item->dimension['height'] <= $box['dimension']['height'] &&
-                $item->dimension['mass'] <= $box['max_weight']
+                $item->dimension['mass'] <= ($box['max_weight'] ?? 0.0)
             ) {
                 $fitsIndex = (int)$key;
                 break;
@@ -49,7 +52,7 @@ class CommonPackingController
             }
         }
         foreach ($items as $item) {
-            if ($item->dimension['mass'] > $maxWeight) {
+            if (($item->dimension['mass'] ?? 0.0) > $maxWeight) {
                 return true;
             }
         }
@@ -115,7 +118,7 @@ class CommonPackingController
         }
         if ($maxWeight > 0) {
             foreach ($items as $key => $item) {
-                if ($item->dimension['mass'] > $maxWeight) {
+                if (($item->dimension['mass'] ?? 0.0) > $maxWeight) {
                     $tooHeavyItems[] = $item;
                     unset($items[$key]);
                 }
@@ -137,9 +140,12 @@ class CommonPackingController
             }
         }
 
-        // Finally, set aside any items that are mass-based only (no dimensions)
+        // Finally, set aside any items that are mass-based only (no dimensions but have mass)
         foreach ($items as $key => $item) {
             if (isset($item->dimension) && $item->dimension['volume'] > 0) {
+                continue;
+            }
+            if (isset($item->dimension) && $item->dimension['mass'] <= 0) {
                 continue;
             }
             $massBased[] = $item;
@@ -147,6 +153,7 @@ class CommonPackingController
         }
 
         // Whatever is left are dimensioned items that fit into at least one box
+        // or items with no dimensions or mass (we will treat them as dimensioned items with a default mass in packing)
         return [$tooHeavyItems, $tooBigItems, $singleItems, $massBased, $containerItems, $items];
     }
 
@@ -193,9 +200,9 @@ class CommonPackingController
 
         foreach ($fittingItems as $key1 => $item) {
             $itemDims = [
-                $item->dimension['length'],
-                $item->dimension['width'],
-                $item->dimension['height'],
+                $item->dimension['length'] > 0.0 ? $item->dimension['length'] : self::DEFAULT_DIMENSION,
+                $item->dimension['width'] > 0.0 ? $item->dimension['width'] : self::DEFAULT_DIMENSION,
+                $item->dimension['height'] > 0.0 ? $item->dimension['height'] : self::DEFAULT_DIMENSION,
             ];
 
             foreach ($this->boxes as $key => $box) {
@@ -209,7 +216,7 @@ class CommonPackingController
             $container = unserialize(serialize($container));
             foreach ($fits as $fitIndex => $fit) {
                 $remainingItems = unserialize(serialize($fittingItems));
-                $result        = [];
+                $result         = [];
                 list($r2, $anyItemsLeft, $remainingItems) = $this->fitItemsInRealBoxes(
                     $remainingItems,
                     $fits,
@@ -219,8 +226,8 @@ class CommonPackingController
                     $result = $r2[0];
                 }
                 if (!empty($result)) {
-                    $container->price             += $result['value']?? 0.0;
-                    $container->dimension['mass'] = (float)$container->dimension['mass'] + ($result['mass'] ?? 0.0);
+                    $container->price             += $result['value'] ?? 0.0;
+                    $container->dimension['mass'] = (float)($container->dimension['mass'] ?? 0.0) + ($result['mass'] ?? 0.0);
                 }
 
 
@@ -292,7 +299,7 @@ class CommonPackingController
                 }
                 foreach ($massBased as $item) {
                     $remainingItems = $item->quantity;
-                    $itemMass       = $item->dimension['mass'] ?? 0.1;
+                    $itemMass       = $item->dimension['mass'] ?? self::DEFAULT_MASS;
                     if ($itemMass <= 0) {
                         $unplacedItems--;
                         continue;
@@ -394,9 +401,9 @@ class CommonPackingController
 
             // Calculate how many can be added
             $itemDims = [
-                $item->dimension['length'],
-                $item->dimension['width'],
-                $item->dimension['height'],
+                $item->dimension['length'] > 0.0 ? $item->dimension['length'] : self::DEFAULT_DIMENSION,
+                $item->dimension['width'] > 0.0 ? $item->dimension['width'] : self::DEFAULT_DIMENSION,
+                $item->dimension['height'] > 0.0 ? $item->dimension['height'] : self::DEFAULT_DIMENSION,
             ];
             $maxItems = self::getMaxPackingConfiguration($box, $itemDims);
             if ($maxItems === 0) {
@@ -405,7 +412,8 @@ class CommonPackingController
             $nItemsToAdd = min($maxItems, $item->quantity);
             // Put them into the box
             $entry['value']         += $nItemsToAdd * $item->price;
-            $entry['mass']          += $nItemsToAdd * ($item->dimension['mass'] ?? 0.1);
+            $entry['mass']          += $nItemsToAdd * ($item->dimension['mass'] > 0.0 ?
+                    $item->dimension['mass'] : self::DEFAULT_MASS);
             $items1[$key]->quantity -= $nItemsToAdd;
 
             // Calculate the remaining boxes content
@@ -550,9 +558,9 @@ class CommonPackingController
 
             // Calculate how many can be added
             $itemDims = [
-                $itemvb->dimension['length'],
-                $itemvb->dimension['width'],
-                $itemvb->dimension['height'],
+                $item->dimension['length'] > 0.0 ? $item->dimension['length'] : self::DEFAULT_DIMENSION,
+                $item->dimension['width'] > 0.0 ? $item->dimension['width'] : self::DEFAULT_DIMENSION,
+                $item->dimension['height'] > 0.0 ? $item->dimension['height'] : self::DEFAULT_DIMENSION,
             ];
             $maxItems = self::getMaxPackingConfiguration($vbox, $itemDims);
             if ($maxItems == 0) {
@@ -566,7 +574,8 @@ class CommonPackingController
             );
 
             $items1[$itemi]->quantity -= $nitems;
-            $entry['mass']            += $nitems * ($itemvb->dimension['mass'] ?? 0.1);
+            $entry['mass']            += $nitems * ($itemvb->dimension['mass'] > 0 ?
+                    $itemvb->dimension['mass'] : self::DEFAULT_MASS);
             $entry['value']           += $nitems * $itemvb->price;
 
             // Calculate the remaining vboxes content
