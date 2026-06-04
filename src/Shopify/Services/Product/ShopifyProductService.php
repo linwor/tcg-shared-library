@@ -10,9 +10,6 @@ use Illuminate\Support\Facades\DB;
 use Shopify\Clients\Graphql;
 use Shopify\Exception\MissingArgumentException;
 
-use function App\Services\Product\logger;
-use function App\Services\Product\now;
-
 class ShopifyProductService
 {
     /**
