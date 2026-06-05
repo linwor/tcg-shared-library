@@ -73,9 +73,10 @@ class ShipLogicParcelController
                     $parcels[] = [
                         'mass'   => $item->dimension['mass'] ?? 0.1,
                         'value'  => $item->price,
-                        'length' => $item->dimension['length'] > 0.0 ? $item->dimension['length'] : 1.0,
-                        'width'  => $item->dimension['width'] > 0.0 ? $item->dimension['width'] : 1.0,
-                        'height' => $item->dimension['height'] > 0.0 ? $item->dimension['height'] : 1.0,
+                        'length'      => (float)($item->dimension['length'] > 0.0 ? $item->dimension['length'] : 1.0),
+                        'width'       => (float)($item->dimension['width'] > 0.0 ? $item->dimension['width'] : 1.0),
+                        'height'      => (float)($item->dimension['height'] > 0.0 ? $item->dimension['height'] : 1.0),
+                        'description' => $item->description,
                     ];
                 }
             }
@@ -102,11 +103,12 @@ class ShipLogicParcelController
             // pack as an individual parcel
             for ($i = 0; $i < $item->quantity; $i++) {
                 $parcels[] = [
-                    'mass'   => $item->dimension['mass'] ?? 0.1,
-                    'value'  => $item->price,
-                    'length' => $item->dimension['length'] > 0.0 ? $item->dimension['length'] : 1.0,
-                    'width'  => $item->dimension['width'] > 0.0 ? $item->dimension['width'] : 1.0,
-                    'height' => $item->dimension['height'] > 0.0 ? $item->dimension['height'] : 1.0,
+                    'mass'        => $item->dimension['mass'] ?? 0.1,
+                    'value'       => $item->price,
+                    'length'      => (float)($item->dimension['length'] > 0.0 ? $item->dimension['length'] : 1.0),
+                    'width'       => (float)($item->dimension['width'] > 0.0 ? $item->dimension['width'] : 1.0),
+                    'height'      => (float)($item->dimension['height'] > 0.0 ? $item->dimension['height'] : 1.0),
+                    'description' => $item->description,
                 ];
             }
         }
@@ -134,9 +136,10 @@ class ShipLogicParcelController
                 $parcels[] = [
                     'mass'   => $item->dimension['mass'] ?? 0.1,
                     'value'  => $item->price,
-                    'length' => $item->dimension['length'] > 0.0 ? $item->dimension['length'] : 1.0,
-                    'width'  => $item->dimension['width'] > 0.0 ? $item->dimension['width'] : 1.0,
-                    'height' => $item->dimension['height'] > 0.0 ? $item->dimension['height'] : 1.0,
+                    'length'      => (float)($item->dimension['length'] > 0.0 ? $item->dimension['length'] : 1.0),
+                    'width'       => (float)($item->dimension['width'] > 0.0 ? $item->dimension['width'] : 1.0),
+                    'height'      => (float)($item->dimension['height'] > 0.0 ? $item->dimension['height'] : 1.0),
+                    'description' => $item->description,
                 ];
             }
         }
