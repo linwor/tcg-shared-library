@@ -558,9 +558,9 @@ class CommonPackingController
 
             // Calculate how many can be added
             $itemDims = [
-                $item->dimension['length'] > 0.0 ? $item->dimension['length'] : self::DEFAULT_DIMENSION,
-                $item->dimension['width'] > 0.0 ? $item->dimension['width'] : self::DEFAULT_DIMENSION,
-                $item->dimension['height'] > 0.0 ? $item->dimension['height'] : self::DEFAULT_DIMENSION,
+                $itemvb->dimension['length'] > 0.0 ? $itemvb->dimension['length'] : self::DEFAULT_DIMENSION,
+                $itemvb->dimension['width'] > 0.0 ? $itemvb->dimension['width'] : self::DEFAULT_DIMENSION,
+                $itemvb->dimension['height'] > 0.0 ? $itemvb->dimension['height'] : self::DEFAULT_DIMENSION,
             ];
             $maxItems = self::getMaxPackingConfiguration($vbox, $itemDims);
             if ($maxItems == 0) {
