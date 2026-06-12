@@ -260,7 +260,7 @@ GRAPHQL;
         // Batch insert new records
         if (!empty($recordsToInsert)) {
             collect($recordsToInsert)->chunk(100)->each(function ($chunk) {
-                DB::table('product_dimensions')->insert($chunk->toArray());
+                ProductDimension::insert($chunk->toArray());
             });
         }
 
