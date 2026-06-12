@@ -259,7 +259,9 @@ GRAPHQL;
 
         // Batch insert new records
         if (!empty($recordsToInsert)) {
-            ProductDimension::insert($recordsToInsert);
+            collect($recordsToInsert)->chunk(100)->each(function ($chunk) {
+                DB::table('product_dimensions')->insert($chunk->toArray());
+            });
         }
 
         // Batch update existing records
