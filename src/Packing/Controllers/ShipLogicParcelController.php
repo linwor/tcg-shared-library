@@ -71,8 +71,8 @@ class ShipLogicParcelController
                 // pack as an individual parcel
                 for ($i = 0; $i < $item->quantity; $i++) {
                     $parcels[] = [
-                        'mass'   => $item->dimension['mass'] ?? 0.1,
-                        'value'  => $item->price,
+                        'mass'        => $item->dimension['mass'] ?? 0.1,
+                        'value'       => $item->price,
                         'length'      => (float)($item->dimension['length'] > 0.0 ? $item->dimension['length'] : 1.0),
                         'width'       => (float)($item->dimension['width'] > 0.0 ? $item->dimension['width'] : 1.0),
                         'height'      => (float)($item->dimension['height'] > 0.0 ? $item->dimension['height'] : 1.0),
@@ -134,8 +134,8 @@ class ShipLogicParcelController
             // pack as an individual parcel
             for ($i = 0; $i < $item->quantity; $i++) {
                 $parcels[] = [
-                    'mass'   => $item->dimension['mass'] ?? 0.1,
-                    'value'  => $item->price,
+                    'mass'        => $item->dimension['mass'] ?? 0.1,
+                    'value'       => $item->price,
                     'length'      => (float)($item->dimension['length'] > 0.0 ? $item->dimension['length'] : 1.0),
                     'width'       => (float)($item->dimension['width'] > 0.0 ? $item->dimension['width'] : 1.0),
                     'height'      => (float)($item->dimension['height'] > 0.0 ? $item->dimension['height'] : 1.0),
@@ -207,9 +207,9 @@ class ShipLogicParcelController
             $parcel             = [
                 'mass'   => 0.00,
                 'value'  => 0.00,
-                'length' => $box['dimension']['length'],
-                'width'  => $box['dimension']['width'],
-                'height' => $box['dimension']['height'],
+                'length' => $box['dimension']['length'] ?? $box['length'],
+                'width'  => $box['dimension']['width'] ?? $box['width'],
+                'height' => $box['dimension']['height'] ?? $box['height'],
             ];
             $boxAddedWeight     = 0.0;
             $boxAvailableWeight = $boxMaxWeight - $boxAddedWeight;
@@ -221,9 +221,9 @@ class ShipLogicParcelController
                     $parcel = [
                         'mass'   => 0.00,
                         'value'  => 0.00,
-                        'length' => $box['dimension']['length'],
-                        'width'  => $box['dimension']['width'],
-                        'height' => $box['dimension']['height'],
+                        'length' => $box['dimension']['length'] ?? $box['length'],
+                        'width'  => $box['dimension']['width'] ?? $box['width'],
+                        'height' => $box['dimension']['height'] ?? $box['height'],
                     ];
                 }
                 foreach ($massBased as $item) {
@@ -241,9 +241,9 @@ class ShipLogicParcelController
                             $parcel               = [
                                 'mass'   => 0.00,
                                 'value'  => 0.00,
-                                'length' => $box['dimension']['length'],
-                                'width'  => $box['dimension']['width'],
-                                'height' => $box['dimension']['height'],
+                                'length' => $box['dimension']['length'] ?? $box['length'],
+                                'width'  => $box['dimension']['width'] ?? $box['width'],
+                                'height' => $box['dimension']['height'] ?? $box['height'],
                             ];
                             $boxAvailableWeight   = $boxMaxWeight;
                             $maxItems             = (int)floor($boxAvailableWeight / $itemMass);
@@ -408,9 +408,9 @@ class ShipLogicParcelController
             $entry['item']        = $j;
             $entry['description'] = $item['name'];
             $entry['pieces']      = 1;
-            $entry['dim1']        = $box['dimension']['length'];
-            $entry['dim2']        = $box['dimension']['width'];
-            $entry['dim3']        = $box['dimension']['height'];
+            $entry['dim1']        = $box['dimension']['length'] ?? $box['length'];
+            $entry['dim2']        = $box['dimension']['width'] ?? $box['width'];
+            $entry['dim3']        = $box['dimension']['height'] ?? $box['height'];
             $entry['actmass']     = 0.0;
             $entry['value']       = 0;
 
