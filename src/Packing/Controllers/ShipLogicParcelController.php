@@ -10,6 +10,9 @@ use Tcg\Common\Packing\Controllers\CommonPackingController;
 class ShipLogicParcelController
 {
     private array $boxes;
+
+    private const DEFAULT_DIMENSION = 1;
+    private const DEFAULT_MASS      = 0.1;
     private array $fittingItems;
     private int $j;
     public CommonPackingController $commonPackingController;
@@ -421,7 +424,13 @@ class ShipLogicParcelController
                 $item['dimension']['height'],
             ];
             $maxItems = self::getMaxPackingConfiguration($box, $pdims);
-            if ($maxItems === 0) {
+            $itemMass = $this->resolveItemMassKg($item);
+            if (($box['max_weight'] ?? 0) > 0) {
+                // Never let volumetric fit alone decide how many go in - a box that
+                // fits N items by volume may still only carry fewer by weight.
+                $maxItems = min($maxItems, (int)floor($box['max_weight'] / $itemMass));
+            }
+            if ($maxItems <= 0) {
                 return null;
             }
             $nItemsToAdd = min($maxItems, $item['quantity']);
@@ -434,7 +443,7 @@ class ShipLogicParcelController
             $vboxes = self::getActualPackingConfigurationAdvanced($box, $pdims, $nItemsToAdd);
             // There are up to three virtual boxes
             for ($vboxi = 0; $vboxi < count($vboxes); $vboxi++) {
-                $this->fitItemsInVbox($vboxes[$vboxi], $items1, $entry);
+                $this->fitItemsInVbox($vboxes[$vboxi], $items1, $entry, (float)($box['max_weight'] ?? 0.0));
             }
             break;
         }
@@ -562,7 +571,7 @@ class ShipLogicParcelController
      *
      * @return void
      */
-    private function fitItemsInVbox($vbox, &$items1, &$entry)
+    private function fitItemsInVbox($vbox, &$items1, &$entry, float $boxMaxWeight = 0.0)
     {
         for ($itemi = 0; $itemi < count($items1); $itemi++) {
             $itemvb = $items1[$itemi];
@@ -581,6 +590,17 @@ class ShipLogicParcelController
                 continue;
             }
 
+            $itemMass = $this->resolveItemMassKg($itemvb);
+            if ($boxMaxWeight > 0) {
+                // Cap by what's left of the physical box's weight budget, not just
+                // by the leftover volumetric space in this virtual box.
+                $remainingWeight = $boxMaxWeight - $entry['actmass'];
+                $maxItems        = min($maxItems, (int)floor($remainingWeight / $itemMass));
+            }
+            if ($maxItems <= 0) {
+                continue;
+            }
+
             // Else put items into this virtual box
             $nitems = min(
                 $maxItems,
@@ -596,7 +616,7 @@ class ShipLogicParcelController
             // Calculate the remaining vboxes content
             $vboxes = self::getActualPackingConfigurationAdvanced($vbox, $pdims, $nitems);
             for ($vbi = 0; $vbi < count($vboxes); $vbi++) {
-                $this->fitItemsInVbox($vboxes[$vbi], $items1, $entry);
+                $this->fitItemsInVbox($vboxes[$vbi], $items1, $entry, $boxMaxWeight);
             }
             break;
         }
@@ -623,5 +643,23 @@ class ShipLogicParcelController
     private static function floatsAreEqual($a, $b): bool
     {
         return abs($a - $b) < 0.0001;
+    }
+
+    /**
+     * Resolve an item's mass in kg, falling back to the Shopify variant weight,
+     * then to the default mass, so weight-based packing limits always have a
+     * usable (non-zero) figure to work with.
+     */
+    private function resolveItemMassKg(array $item): float
+    {
+        $grams = $item['grams'] ?? 0.0;
+        if ($grams <= 0.0) {
+            $grams = $item['variant']['inventoryItem']['measurement']['weight']['value'] ?? 0.0;
+        }
+        if ($grams <= 0.0) {
+            $grams = self::DEFAULT_MASS * 1000.0;
+        }
+
+        return $grams / 1000.0;
     }
 }
