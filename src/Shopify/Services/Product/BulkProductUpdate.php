@@ -24,13 +24,13 @@ class BulkProductUpdate
     public function handle(Request $request): Application|ResponseFactory|Response
     {
         try {
-            $shop = $request->input('shop');
+            $shop     = $request->input('shop');
             $products = $request->input('products');
 
             Log::debug('Bulk Import Data Received:', [
-                'shop' => $shop,
+                'shop'          => $shop,
                 'product_count' => count($products),
-                'products' => $products
+                'products'      => $products
             ]);
 
             $result = $this->processBulkImport($products, $shop);
@@ -38,14 +38,14 @@ class BulkProductUpdate
             return response($result, $result['status'] ? 200 : 422);
         } catch (Exception $e) {
             Log::error('Bulk Product Update Error: ' . $e->getMessage(), [
-                'trace' => $e->getTraceAsString(),
+                'trace'        => $e->getTraceAsString(),
                 'request_data' => $request->all()
             ]);
 
             return response([
-                'message' => 'An error occurred during bulk update',
-                'status' => false
-            ], 500);
+                                'message' => 'An error occurred during bulk update',
+                                'status'  => false
+                            ], 500);
         }
     }
 
@@ -54,6 +54,7 @@ class BulkProductUpdate
      *
      * @param array $products
      * @param string $shop
+     *
      * @return array
      */
     private function processBulkImport(array $products, string $shop): array
@@ -70,6 +71,7 @@ class BulkProductUpdate
             return $this->buildResponse($products, $results);
         } catch (Throwable $e) {
             Log::error('Bulk update transaction failed: ' . $e->getMessage());
+
             return $this->buildFailureResponse($products);
         }
     }
@@ -91,6 +93,7 @@ class BulkProductUpdate
             if ($existing) {
                 $this->updateExistingProduct($existing, $productData);
                 $results['updated']++;
+
                 return;
             }
 
@@ -112,9 +115,9 @@ class BulkProductUpdate
     private function findExistingProduct(array $productData, string $shop): ?ProductDimension
     {
         return ProductDimension::where('shop', $shop)
-            ->where('product_id', $productData['product_id'])
-            ->where('variant_id', $productData['variant_id'])
-            ->first();
+                               ->where('product_id', $productData['product_id'])
+                               ->where('variant_id', $productData['variant_id'])
+                               ->first();
     }
 
     /**
@@ -128,11 +131,11 @@ class BulkProductUpdate
     private function updateExistingProduct(ProductDimension $existing, array $productData): void
     {
         $data = [
-            'length' => (int) $productData['length'],
-            'width' => (int) $productData['width'],
-            'height' => (int) $productData['height'],
-            'single_parcel_item' => (bool) $productData['single_parcel_item'],
-            'updated_at' => now(),
+            'length'             => (int)$productData['length'],
+            'width'              => (int)$productData['width'],
+            'height'             => (int)$productData['height'],
+            'single_parcel_item' => (bool)$productData['single_parcel_item'],
+            'updated_at'         => now(),
         ];
 
         $existing->update($data);
@@ -151,7 +154,7 @@ class BulkProductUpdate
         Log::info('Skipping non-existent product', [
             'product_id' => $productData['product_id'],
             'variant_id' => $productData['variant_id'],
-            'shop' => $shop
+            'shop'       => $shop
         ]);
     }
 
@@ -167,14 +170,15 @@ class BulkProductUpdate
      */
     private function handleProductError(array $productData, string $shop, Exception $e, array &$results): void
     {
-        $error = "Product {$productData['product_id']} - Variant {$productData['variant_id']}: " . $e->getMessage();
+        $error               = "Product {$productData['product_id']} - Variant {$productData['variant_id']}: " . $e->getMessage(
+            );
         $results['errors'][] = $error;
 
         Log::warning('Individual product update failed', [
-            'shop' => $shop,
+            'shop'       => $shop,
             'product_id' => $productData['product_id'] ?? 'unknown',
             'variant_id' => $productData['variant_id'] ?? 'unknown',
-            'error' => $e->getMessage()
+            'error'      => $e->getMessage()
         ]);
     }
 
@@ -190,18 +194,18 @@ class BulkProductUpdate
     {
         $response = [
             'message' => 'Bulk update completed',
-            'status' => true,
+            'status'  => true,
             'summary' => [
                 'total_products' => count($products),
-                'updated' => $results['updated'],
-                'skipped' => $results['skipped'],
-                'processed' => $results['updated'],
-                'failed' => count($results['errors'])
+                'updated'        => $results['updated'],
+                'skipped'        => $results['skipped'],
+                'processed'      => $results['updated'],
+                'failed'         => count($results['errors'])
             ]
         ];
 
         if (!empty($results['errors'])) {
-            $response['errors'] = $results['errors'];
+            $response['errors']  = $results['errors'];
             $response['message'] .= ' with some errors';
         } else {
             $response['message'] .= ' successfully';
@@ -212,6 +216,7 @@ class BulkProductUpdate
         }
 
         Log::info('Bulk update completed', $response['summary']);
+
         return $response;
     }
 
@@ -226,13 +231,13 @@ class BulkProductUpdate
     {
         return [
             'message' => 'Bulk update failed',
-            'status' => false,
+            'status'  => false,
             'summary' => [
                 'total_products' => count($products),
-                'updated' => 0,
-                'skipped' => 0,
-                'processed' => 0,
-                'failed' => count($products)
+                'updated'        => 0,
+                'skipped'        => 0,
+                'processed'      => 0,
+                'failed'         => count($products)
             ]
         ];
     }
