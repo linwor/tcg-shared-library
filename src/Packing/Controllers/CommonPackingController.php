@@ -266,42 +266,89 @@ class CommonPackingController
      *
      * @return array
      */
-    public function fitMassItemsInBoxes(array $massBased): array
+    private function fitMassItemsInBoxes($massBasedOriginal): array
     {
         $parcels = [];
 
-        $unplacedItems      = array_reduce($massBased, function ($carry, $item) {
+        // For this we sorth the items in ascending order of max weight and try to fit the items into the boxes
+        usort($massBasedOriginal, function ($a, $b) {
+            $a = $a->dimension['mass'] > 0 ? $a->dimension['mass'] : 0.1;
+            $b = $b->dimension['mass'] > 0 ? $b->dimension['mass'] : 0.1;
+
+            return $a <=> $b;
+        });
+
+        $initialUnplacedItems = $unplacedItems = array_reduce($massBasedOriginal, function ($carry, $item) {
             return $carry + $item->quantity;
         }, 0);
+        $totalMass            = array_reduce($massBasedOriginal, function ($carry, $item) {
+            return $carry + ($item->dimension['mass'] > 0 ? $item->dimension['mass'] : 0.1) * $item->quantity;
+        }, 0);
+        $placedItems          = 0;
 
         foreach ($this->boxes as $boxIndex => $box) {
+            $massBased    = unserialize(serialize($massBasedOriginal));
             $boxMaxWeight = $box['max_weight'];
             if ($boxMaxWeight <= 0) {
                 continue;
             }
-            $parcel             = [
+            if ($boxIndex > 0) {
+                $hasSingleParcel = false;
+                foreach ($parcels as $parcel) {
+                    if (count($parcel) === 1) {
+                        $hasSingleParcel = true;
+                        break;
+                    }
+                }
+                if ($hasSingleParcel) {
+                    $parcels[] = [];
+                    continue;
+                }
+            }
+            $allItemsCanFit = true;
+            foreach ($massBased as $item) {
+                if ($item->dimension['mass'] > $boxMaxWeight) {
+                    $allItemsCanFit = false;
+                    break;
+                }
+            }
+            if (!$allItemsCanFit) {
+                $parcels[$boxIndex] = [];
+                continue;
+            }
+
+            $unplacedItems = array_reduce($massBased, function ($carry, $item) {
+                return $carry + $item->quantity;
+            }, 0);
+            if ($unplacedItems <= 0) {
+                $parcels[$boxIndex] = [];
+                continue;
+            }
+            $parcel = [
                 'mass'   => 0.00,
                 'value'  => 0.00,
-                'length' => $box['dimension']['length'],
-                'width'  => $box['dimension']['width'],
-                'height' => $box['dimension']['height'],
+                'length' => $box['dimension']['length'] ?? $box['length'],
+                'width'  => $box['dimension']['width'] ?? $box['width'],
+                'height' => $box['dimension']['height'] ?? $box['height'],
             ];
-            $boxAddedWeight     = 0.0;
-            $boxAvailableWeight = $boxMaxWeight - $boxAddedWeight;
 
+
+            $boxAddedWeight = 0.0;
             while ($unplacedItems > 0) {
+                $boxAvailableWeight = $boxMaxWeight - $boxAddedWeight;
                 if ($boxAvailableWeight <= 0) {
                     $parcel = [
                         'mass'   => 0.00,
                         'value'  => 0.00,
-                        'length' => $box['dimension']['length'],
-                        'width'  => $box['dimension']['width'],
-                        'height' => $box['dimension']['height'],
+                        'length' => $box['dimension']['length'] ?? $box['length'],
+                        'width'  => $box['dimension']['width'] ?? $box['width'],
+                        'height' => $box['dimension']['height'] ?? $box['height'],
                     ];
                 }
-                foreach ($massBased as $item) {
+                foreach ($massBased as $key => $item) {
                     $remainingItems = $item->quantity;
-                    $itemMass       = $item->dimension['mass'] ?? self::DEFAULT_MASS;
+                    // Mass-based items include those with no dimension data at all - default mass
+                    $itemMass = $item->dimension['mass'] > 0 ? $item->dimension['mass'] : 0.1;
                     if ($itemMass <= 0) {
                         $unplacedItems--;
                         continue;
@@ -309,24 +356,38 @@ class CommonPackingController
                     while ($remainingItems > 0 && $unplacedItems > 0) {
                         $maxItems = (int)floor($boxAvailableWeight / $itemMass);
                         if ($maxItems <= 0) {
-                            $parcels[$boxIndex][] = $parcel;
-                            $parcel               = [
-                                'mass'   => 0.00,
-                                'value'  => 0.00,
-                                'length' => $box['dimension']['length'],
-                                'width'  => $box['dimension']['width'],
-                                'height' => $box['dimension']['height'],
-                            ];
-                            $boxAvailableWeight   = $boxMaxWeight;
-                            $maxItems             = (int)floor($boxAvailableWeight / $itemMass);
+                            break 3;
                         }
+                        $boxAvailableWeight = $boxMaxWeight;
+                        $maxItems           = (int)floor($boxAvailableWeight / $itemMass);
+                        if ($maxItems <= 0) {
+                            break 3;
+                        }
+
                         $addedItems      = min($remainingItems, $maxItems);
+                        $placedItems     += $addedItems;
                         $parcel['mass']  += $addedItems * $itemMass;
                         $parcel['value'] += $addedItems * $item->price;
+                        $item->quantity  -= $addedItems;
+                        $massBased[$key] = $item;
+                        if ($item->quantity === 0) {
+                            unset($massBased[$key]);
+                        }
 
                         $remainingItems     -= $addedItems;
                         $unplacedItems      -= $addedItems;
                         $boxAvailableWeight -= $addedItems * $itemMass;
+                        if ($boxAvailableWeight < $itemMass) {
+                            $parcels[$boxIndex][] = $parcel;
+                            $parcel               = [
+                                'mass'   => 0.00,
+                                'value'  => 0.00,
+                                'length' => $box['dimension']['length'] ?? $box['length'],
+                                'width'  => $box['dimension']['width'] ?? $box['width'],
+                                'height' => $box['dimension']['height'] ?? $box['height'],
+                            ];
+                            break 2;
+                        }
                         if ($unplacedItems === 0) {
                             $parcels[$boxIndex][] = $parcel;
                         }
@@ -335,36 +396,14 @@ class CommonPackingController
             }
         }
 
+        $parcels = array_filter($parcels, fn($parcel) => !empty($parcel));
         uasort($parcels, function ($a, $b) {
-            return count($a) <=> count($b); // Sort in descending order of parcel count
+            return count($a) <=> count($b); // Sort in asscending order of parcel count
         });
         $keys         = array_keys($parcels);
         $values       = array_values($parcels);
-        $finalParcels = [];
-        $selectedKey  = $keys[0];
-        if ($selectedKey !== 0) {
-            foreach ($values[0] as $value) {
-                for ($i = 0; $i < $selectedKey; $i++) {
-                    if (!isset($this->boxes[$i])) {
-                        $finalParcels[] = $value;
-                        continue;
-                    }
-                    if ($this->boxes[$i]['max_weight'] >= $value['mass']) {
-                        $value['length'] = $this->boxes[$i]['dimension']['length'];
-                        $value['width']  = $this->boxes[$i]['dimension']['width'];
-                        $value['height'] = $this->boxes[$i]['dimension']['height'];
-                        $finalParcels[]  = $value;
-                        break;
-                    } else {
-                        $finalParcels[] = $value;
-                    }
-                }
-            }
-        } else {
-            $finalParcels = $values[0];
-        }
 
-        return $finalParcels;
+        return $values[0] ?? [];
     }
 
     /**
