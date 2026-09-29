@@ -206,6 +206,10 @@ class ShipLogicParcelController
     {
         $parcels = [];
 
+        $unplacedItems      = array_reduce($massBased, function ($carry, $item) {
+            return $carry + $item->quantity;
+        }, 0);
+
         foreach ($this->boxes as $boxIndex => $box) {
             $boxMaxWeight = $box['max_weight'];
             if ($boxMaxWeight <= 0) {
@@ -220,9 +224,6 @@ class ShipLogicParcelController
             ];
             $boxAddedWeight     = 0.0;
             $boxAvailableWeight = $boxMaxWeight - $boxAddedWeight;
-            $unplacedItems      = array_reduce($massBased, function ($carry, $item) {
-                return $carry + $item->quantity;
-            }, 0);
             while ($unplacedItems > 0) {
                 if ($boxAvailableWeight <= 0) {
                     $parcel = [
