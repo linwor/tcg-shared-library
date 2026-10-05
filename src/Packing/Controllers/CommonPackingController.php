@@ -204,9 +204,14 @@ class CommonPackingController
                 $item->dimension['width'] > 0.0 ? $item->dimension['width'] : self::DEFAULT_DIMENSION,
                 $item->dimension['height'] > 0.0 ? $item->dimension['height'] : self::DEFAULT_DIMENSION,
             ];
+            $itemMass = $item->dimension['mass'] > 0.0 ? $item->dimension['mass'] : self::DEFAULT_MASS;
 
             foreach ($this->boxes as $key => $box) {
-                $fits[$key][$key1] = self::getMaxPackingConfiguration($box, $itemDims);
+                $maxByVolume       = self::getMaxPackingConfiguration($box, $itemDims);
+                $maxByWeight       = $box['max_weight'] > 0.0
+                    ? (int)floor($box['max_weight'] / $itemMass)
+                    : 0;
+                $fits[$key][$key1] = min($maxByVolume, $maxByWeight);
             }
         }
 
