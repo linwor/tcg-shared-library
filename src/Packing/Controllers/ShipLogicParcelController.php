@@ -10,6 +10,9 @@ use Tcg\Common\Packing\Controllers\CommonPackingController;
 class ShipLogicParcelController
 {
     private array $boxes;
+
+    private const DEFAULT_DIMENSION = 1;
+    private const DEFAULT_MASS = 0.1;
     private array $fittingItems;
     private int $j;
     public CommonPackingController $commonPackingController;

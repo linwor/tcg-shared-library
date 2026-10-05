@@ -6,8 +6,8 @@ use Tcg\Common\Models\Product;
 
 class CommonPackingController
 {
-    private const DEFAULT_MASS = 0.1;
     private const DEFAULT_DIMENSION = 1;
+    private const DEFAULT_MASS = 0.1;
 
     private $boxes;
 
@@ -109,7 +109,7 @@ class CommonPackingController
             }
         }
 
-        // Next, find any too-heavy items (no-dimensions) and set them aside
+        // Next, find any too-heavy items and set them aside
         $maxWeight = 0.0;
         foreach ($this->boxes as $box) {
             if (($box['max_weight'] ?? 0.0) > $maxWeight) {
@@ -267,151 +267,6 @@ class CommonPackingController
 
 
     /**
-     * @param array $massBased
-     *
-     * @return array
-     */
-    private function fitMassItemsInBoxes($massBasedOriginal): array
-    {
-        $parcels = [];
-
-        // For this we sorth the items in ascending order of max weight and try to fit the items into the boxes
-        usort($massBasedOriginal, function ($a, $b) {
-            $a = $a->dimension['mass'] > 0 ? $a->dimension['mass'] : 0.1;
-            $b = $b->dimension['mass'] > 0 ? $b->dimension['mass'] : 0.1;
-
-            return $a <=> $b;
-        });
-
-        $initialUnplacedItems = $unplacedItems = array_reduce($massBasedOriginal, function ($carry, $item) {
-            return $carry + $item->quantity;
-        }, 0);
-        $totalMass            = array_reduce($massBasedOriginal, function ($carry, $item) {
-            return $carry + ($item->dimension['mass'] > 0 ? $item->dimension['mass'] : 0.1) * $item->quantity;
-        }, 0);
-        $placedItems          = 0;
-
-        foreach ($this->boxes as $boxIndex => $box) {
-            $massBased    = unserialize(serialize($massBasedOriginal));
-            $boxMaxWeight = $box['max_weight'];
-            if ($boxMaxWeight <= 0) {
-                continue;
-            }
-            if ($boxIndex > 0) {
-                $hasSingleParcel = false;
-                foreach ($parcels as $parcel) {
-                    if (count($parcel) === 1) {
-                        $hasSingleParcel = true;
-                        break;
-                    }
-                }
-                if ($hasSingleParcel) {
-                    $parcels[] = [];
-                    continue;
-                }
-            }
-            $allItemsCanFit = true;
-            foreach ($massBased as $item) {
-                if ($item->dimension['mass'] > $boxMaxWeight) {
-                    $allItemsCanFit = false;
-                    break;
-                }
-            }
-            if (!$allItemsCanFit) {
-                $parcels[$boxIndex] = [];
-                continue;
-            }
-
-            $unplacedItems = array_reduce($massBased, function ($carry, $item) {
-                return $carry + $item->quantity;
-            }, 0);
-            if ($unplacedItems <= 0) {
-                $parcels[$boxIndex] = [];
-                continue;
-            }
-            $parcel = [
-                'mass'   => 0.00,
-                'value'  => 0.00,
-                'length' => $box['dimension']['length'] ?? $box['length'],
-                'width'  => $box['dimension']['width'] ?? $box['width'],
-                'height' => $box['dimension']['height'] ?? $box['height'],
-            ];
-
-
-            $boxAddedWeight = 0.0;
-            while ($unplacedItems > 0) {
-                $boxAvailableWeight = $boxMaxWeight - $boxAddedWeight;
-                if ($boxAvailableWeight <= 0) {
-                    $parcel = [
-                        'mass'   => 0.00,
-                        'value'  => 0.00,
-                        'length' => $box['dimension']['length'] ?? $box['length'],
-                        'width'  => $box['dimension']['width'] ?? $box['width'],
-                        'height' => $box['dimension']['height'] ?? $box['height'],
-                    ];
-                }
-                foreach ($massBased as $key => $item) {
-                    $remainingItems = $item->quantity;
-                    // Mass-based items include those with no dimension data at all - default mass
-                    $itemMass = $item->dimension['mass'] > 0 ? $item->dimension['mass'] : 0.1;
-                    if ($itemMass <= 0) {
-                        $unplacedItems--;
-                        continue;
-                    }
-                    while ($remainingItems > 0 && $unplacedItems > 0) {
-                        $maxItems = (int)floor($boxAvailableWeight / $itemMass);
-                        if ($maxItems <= 0) {
-                            break 3;
-                        }
-                        $boxAvailableWeight = $boxMaxWeight;
-                        $maxItems           = (int)floor($boxAvailableWeight / $itemMass);
-                        if ($maxItems <= 0) {
-                            break 3;
-                        }
-
-                        $addedItems      = min($remainingItems, $maxItems);
-                        $placedItems     += $addedItems;
-                        $parcel['mass']  += $addedItems * $itemMass;
-                        $parcel['value'] += $addedItems * $item->price;
-                        $item->quantity  -= $addedItems;
-                        $massBased[$key] = $item;
-                        if ($item->quantity === 0) {
-                            unset($massBased[$key]);
-                        }
-
-                        $remainingItems     -= $addedItems;
-                        $unplacedItems      -= $addedItems;
-                        $boxAvailableWeight -= $addedItems * $itemMass;
-                        if ($boxAvailableWeight < $itemMass) {
-                            $parcels[$boxIndex][] = $parcel;
-                            $parcel               = [
-                                'mass'   => 0.00,
-                                'value'  => 0.00,
-                                'length' => $box['dimension']['length'] ?? $box['length'],
-                                'width'  => $box['dimension']['width'] ?? $box['width'],
-                                'height' => $box['dimension']['height'] ?? $box['height'],
-                            ];
-                            break 2;
-                        }
-                        if ($unplacedItems === 0) {
-                            $parcels[$boxIndex][] = $parcel;
-                        }
-                    }
-                }
-            }
-        }
-
-        $parcels = array_filter($parcels, fn($parcel) => !empty($parcel));
-        uasort($parcels, function ($a, $b) {
-            return count($a) <=> count($b); // Sort in asscending order of parcel count
-        });
-        $keys         = array_keys($parcels);
-        $values       = array_values($parcels);
-
-        return $values[0] ?? [];
-    }
-
-    /**
      * @param array $items
      * @param array $fits
      * @param int $boxndx
@@ -456,7 +311,13 @@ class CommonPackingController
                 $item->dimension['height'] > 0.0 ? $item->dimension['height'] : self::DEFAULT_DIMENSION,
             ];
             $maxItems = self::getMaxPackingConfiguration($box, $itemDims);
-            if ($maxItems === 0) {
+            $itemMass = $this->resolveItemMassKg($item);
+            if (($box['max_weight'] ?? 0) > 0) {
+                // Never let volumetric fit alone decide how many go in - a box that
+                // fits N items by volume may still only carry fewer by weight.
+                $maxItems = min($maxItems, (int)floor($box['max_weight'] / $itemMass));
+            }
+            if ($maxItems <= 0) {
                 return null;
             }
             $nItemsToAdd = min($maxItems, $item->quantity);
@@ -470,7 +331,7 @@ class CommonPackingController
             $vBoxes = self::getActualPackingConfigurationAdvanced($box, $itemDims, $nItemsToAdd);
             // There are up to three virtual boxes
             for ($vBoxi = 0; $vBoxi < count($vBoxes); $vBoxi++) {
-                $this->fitItemsInVbox($vBoxes[$vBoxi], $items1, $entry);
+                $this->fitItemsInVbox($vBoxes[$vBoxi], $items1, $entry, (float)($box['max_weight'] ?? 0.0));
             }
             break;
         }
@@ -598,7 +459,7 @@ class CommonPackingController
      *
      * @return void
      */
-    private function fitItemsInVbox($vbox, &$items1, &$entry)
+    private function fitItemsInVbox($vbox, &$items1, &$entry, float $boxMaxWeight = 0.0)
     {
         for ($itemi = 0; $itemi < count($items1); $itemi++) {
             $itemvb = $items1[$itemi];
@@ -617,6 +478,17 @@ class CommonPackingController
                 continue;
             }
 
+            $itemMass = $this->resolveItemMassKg($itemvb);
+            if ($boxMaxWeight > 0) {
+                // Cap by what's left of the physical box's weight budget, not just
+                // by the leftover volumetric space in this virtual box.
+                $remainingWeight = $boxMaxWeight - $entry['mass'];
+                $maxItems        = min($maxItems, (int)floor($remainingWeight / $itemMass));
+            }
+            if ($maxItems <= 0) {
+                continue;
+            }
+
             // Else put items into this virtual box
             $nitems = min(
                 $maxItems,
@@ -631,7 +503,7 @@ class CommonPackingController
             // Calculate the remaining vboxes content
             $vboxes = self::getActualPackingConfigurationAdvanced($vbox, $itemDims, $nitems);
             for ($vbi = 0; $vbi < count($vboxes); $vbi++) {
-                $this->fitItemsInVbox($vboxes[$vbi], $items1, $entry);
+                $this->fitItemsInVbox($vboxes[$vbi], $items1, $entry, $boxMaxWeight);
             }
             break;
         }
@@ -668,5 +540,20 @@ class CommonPackingController
     private function packVol(array $package): float
     {
         return (float)$package['length'] * (float)$package['width'] * (float)$package['height'];
+    }
+
+    /**
+     * Resolve an item's mass in kg, falling back to the Shopify variant weight,
+     * then to the default mass, so weight-based packing limits always have a
+     * usable (non-zero) figure to work with.
+     */
+    private function resolveItemMassKg(Product $item): float
+    {
+        $mass = $item->dimension['mass'] ?? 0.0;
+        if ($mass <= 0.0) {
+            $mass = self::DEFAULT_MASS;
+        }
+
+        return $mass;
     }
 }
