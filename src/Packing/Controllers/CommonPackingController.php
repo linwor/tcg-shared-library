@@ -165,6 +165,7 @@ class CommonPackingController
      */
     public function getMaxPackingConfiguration(array $box, array $itemDims): int
     {
+        $boxMaxWeight    = $box['max_weight'] ?? 0.0;
         $boxPermutations = [
             [0, 1, 2],
             [0, 2, 1],
@@ -182,10 +183,12 @@ class CommonPackingController
         }
         $maxItems = 0;
         foreach ($boxPermutations as $boxPermutation) {
-            $boxItems = (int)($box[0] / $itemDims[$boxPermutation[0]]);
-            $boxItems *= (int)($box[1] / $itemDims[$boxPermutation[1]]);
-            $boxItems *= (int)($box[2] / $itemDims[$boxPermutation[2]]);
-            $maxItems = max($maxItems, $boxItems);
+            $boxItems        = (int)($box[0] / $itemDims[$boxPermutation[0]]);
+            $boxItems        *= (int)($box[1] / $itemDims[$boxPermutation[1]]);
+            $boxItems        *= (int)($box[2] / $itemDims[$boxPermutation[2]]);
+            $boxMaxMassItems = $boxMaxWeight > 0.0 ? (int)floor($boxMaxWeight / $itemDims[3]) : $boxItems;
+            $boxItems        = min($boxItems, $boxMaxMassItems);
+            $maxItems        = max($maxItems, $boxItems);
         }
 
         return $maxItems;
@@ -203,19 +206,18 @@ class CommonPackingController
                 $item->dimension['length'] > 0.0 ? $item->dimension['length'] : self::DEFAULT_DIMENSION,
                 $item->dimension['width'] > 0.0 ? $item->dimension['width'] : self::DEFAULT_DIMENSION,
                 $item->dimension['height'] > 0.0 ? $item->dimension['height'] : self::DEFAULT_DIMENSION,
+                $item->dimension['mass'] > 0.0 ? $item->dimension['mass'] : self::DEFAULT_MASS
             ];
             $itemMass = $item->dimension['mass'] > 0.0 ? $item->dimension['mass'] : self::DEFAULT_MASS;
 
             foreach ($this->boxes as $key => $box) {
-                $maxByVolume       = self::getMaxPackingConfiguration($box, $itemDims);
-                $maxByWeight       = $box['max_weight'] > 0.0
-                    ? (int)floor($box['max_weight'] / $itemMass)
-                    : 0;
-                $fits[$key][$key1] = min($maxByVolume, $maxByWeight);
+                $maxByMassVolume   = self::getMaxPackingConfiguration($box, $itemDims);
+                $fits[$key][$key1] = $maxByMassVolume;
             }
         }
 
         $tcgPackages = [];
+        $k           = 0;
 
         if ($isContainer && $container !== null) {
             $container = unserialize(serialize($container));
@@ -247,7 +249,9 @@ class CommonPackingController
                     list($r2, $anyItemsLeft, $remainingItems) = $this->fitItemsInRealBoxes(
                         $remainingItems,
                         $fits,
-                        (int)$fitIndex
+                        (int)$fitIndex,
+                        $k,
+                        $tcgPackages
                     );
                     if ($r2 !== null) {
                         $results[] = $r2[0];
@@ -265,152 +269,6 @@ class CommonPackingController
         }
     }
 
-
-    /**
-     * @param array $massBased
-     *
-     * @return array
-     */
-    private function fitMassItemsInBoxes($massBasedOriginal): array
-    {
-        $parcels = [];
-
-        // For this we sorth the items in ascending order of max weight and try to fit the items into the boxes
-        usort($massBasedOriginal, function ($a, $b) {
-            $a = $a->dimension['mass'] > 0 ? $a->dimension['mass'] : 0.1;
-            $b = $b->dimension['mass'] > 0 ? $b->dimension['mass'] : 0.1;
-
-            return $a <=> $b;
-        });
-
-        $initialUnplacedItems = $unplacedItems = array_reduce($massBasedOriginal, function ($carry, $item) {
-            return $carry + $item->quantity;
-        }, 0);
-        $totalMass            = array_reduce($massBasedOriginal, function ($carry, $item) {
-            return $carry + ($item->dimension['mass'] > 0 ? $item->dimension['mass'] : 0.1) * $item->quantity;
-        }, 0);
-        $placedItems          = 0;
-
-        foreach ($this->boxes as $boxIndex => $box) {
-            $massBased    = unserialize(serialize($massBasedOriginal));
-            $boxMaxWeight = $box['max_weight'];
-            if ($boxMaxWeight <= 0) {
-                continue;
-            }
-            if ($boxIndex > 0) {
-                $hasSingleParcel = false;
-                foreach ($parcels as $parcel) {
-                    if (count($parcel) === 1) {
-                        $hasSingleParcel = true;
-                        break;
-                    }
-                }
-                if ($hasSingleParcel) {
-                    $parcels[] = [];
-                    continue;
-                }
-            }
-            $allItemsCanFit = true;
-            foreach ($massBased as $item) {
-                if ($item->dimension['mass'] > $boxMaxWeight) {
-                    $allItemsCanFit = false;
-                    break;
-                }
-            }
-            if (!$allItemsCanFit) {
-                $parcels[$boxIndex] = [];
-                continue;
-            }
-
-            $unplacedItems = array_reduce($massBased, function ($carry, $item) {
-                return $carry + $item->quantity;
-            }, 0);
-            if ($unplacedItems <= 0) {
-                $parcels[$boxIndex] = [];
-                continue;
-            }
-            $parcel = [
-                'mass'   => 0.00,
-                'value'  => 0.00,
-                'length' => $box['dimension']['length'] ?? $box['length'],
-                'width'  => $box['dimension']['width'] ?? $box['width'],
-                'height' => $box['dimension']['height'] ?? $box['height'],
-            ];
-
-
-            $boxAddedWeight = 0.0;
-            while ($unplacedItems > 0) {
-                $boxAvailableWeight = $boxMaxWeight - $boxAddedWeight;
-                if ($boxAvailableWeight <= 0) {
-                    $parcel = [
-                        'mass'   => 0.00,
-                        'value'  => 0.00,
-                        'length' => $box['dimension']['length'] ?? $box['length'],
-                        'width'  => $box['dimension']['width'] ?? $box['width'],
-                        'height' => $box['dimension']['height'] ?? $box['height'],
-                    ];
-                }
-                foreach ($massBased as $key => $item) {
-                    $remainingItems = $item->quantity;
-                    // Mass-based items include those with no dimension data at all - default mass
-                    $itemMass = $item->dimension['mass'] > 0 ? $item->dimension['mass'] : 0.1;
-                    if ($itemMass <= 0) {
-                        $unplacedItems--;
-                        continue;
-                    }
-                    while ($remainingItems > 0 && $unplacedItems > 0) {
-                        $maxItems = (int)floor($boxAvailableWeight / $itemMass);
-                        if ($maxItems <= 0) {
-                            break 3;
-                        }
-                        $boxAvailableWeight = $boxMaxWeight;
-                        $maxItems           = (int)floor($boxAvailableWeight / $itemMass);
-                        if ($maxItems <= 0) {
-                            break 3;
-                        }
-
-                        $addedItems      = min($remainingItems, $maxItems);
-                        $placedItems     += $addedItems;
-                        $parcel['mass']  += $addedItems * $itemMass;
-                        $parcel['value'] += $addedItems * $item->price;
-                        $item->quantity  -= $addedItems;
-                        $massBased[$key] = $item;
-                        if ($item->quantity === 0) {
-                            unset($massBased[$key]);
-                        }
-
-                        $remainingItems     -= $addedItems;
-                        $unplacedItems      -= $addedItems;
-                        $boxAvailableWeight -= $addedItems * $itemMass;
-                        if ($boxAvailableWeight < $itemMass) {
-                            $parcels[$boxIndex][] = $parcel;
-                            $parcel               = [
-                                'mass'   => 0.00,
-                                'value'  => 0.00,
-                                'length' => $box['dimension']['length'] ?? $box['length'],
-                                'width'  => $box['dimension']['width'] ?? $box['width'],
-                                'height' => $box['dimension']['height'] ?? $box['height'],
-                            ];
-                            break 2;
-                        }
-                        if ($unplacedItems === 0) {
-                            $parcels[$boxIndex][] = $parcel;
-                        }
-                    }
-                }
-            }
-        }
-
-        $parcels = array_filter($parcels, fn($parcel) => !empty($parcel));
-        uasort($parcels, function ($a, $b) {
-            return count($a) <=> count($b); // Sort in asscending order of parcel count
-        });
-        $keys         = array_keys($parcels);
-        $values       = array_values($parcels);
-
-        return $values[0] ?? [];
-    }
-
     /**
      * @param array $items
      * @param array $fits
@@ -418,8 +276,11 @@ class CommonPackingController
      *
      * @return array|null
      */
-    public function fitItemsInRealBoxes(array $items, array $fits, int $boxndx = 0): ?array
-    {
+    public function fitItemsInRealBoxes(
+        array $items,
+        array $fits,
+        int $boxndx = 0,
+    ): ?array {
         $items1 = array_values($items);
 
         foreach ($fits as $fitKey => $fit) {
@@ -448,12 +309,14 @@ class CommonPackingController
             $entry['height']      = $box['dimension']['height'] ?? $box['height'];
             $entry['mass']        = 0.0;
             $entry['value']       = 0;
+            $entry['maxWeight']   = $box['max_weight'] ?? 0.0;
 
             // Calculate how many can be added
             $itemDims = [
                 $item->dimension['length'] > 0.0 ? $item->dimension['length'] : self::DEFAULT_DIMENSION,
                 $item->dimension['width'] > 0.0 ? $item->dimension['width'] : self::DEFAULT_DIMENSION,
                 $item->dimension['height'] > 0.0 ? $item->dimension['height'] : self::DEFAULT_DIMENSION,
+                $item->dimension['mass'] > 0.0 ? $item->dimension['mass'] : self::DEFAULT_MASS
             ];
             $maxItems = self::getMaxPackingConfiguration($box, $itemDims);
             if ($maxItems === 0) {
@@ -607,13 +470,17 @@ class CommonPackingController
             }
 
             // Calculate how many can be added
-            $itemDims = [
+            $itemDims        = [
                 $itemvb->dimension['length'] > 0.0 ? $itemvb->dimension['length'] : self::DEFAULT_DIMENSION,
                 $itemvb->dimension['width'] > 0.0 ? $itemvb->dimension['width'] : self::DEFAULT_DIMENSION,
                 $itemvb->dimension['height'] > 0.0 ? $itemvb->dimension['height'] : self::DEFAULT_DIMENSION,
+                $itemvb->dimension['mass'] > 0.0 ? $itemvb->dimension['mass'] : self::DEFAULT_MASS
             ];
-            $maxItems = self::getMaxPackingConfiguration($vbox, $itemDims);
-            if ($maxItems == 0) {
+            $maxItems        = self::getMaxPackingConfiguration($vbox, $itemDims);
+            $availableWeight = $entry['maxWeight'] > 0.0 ? $entry['maxWeight'] - $entry['mass'] : 0.0;
+            $maxItemsByMass  = $availableWeight > 0.0 ? (int)floor($availableWeight / $itemDims[3]) : $maxItems;
+            $maxItems        = min($maxItems, $maxItemsByMass);
+            if ($maxItems === 0) {
                 continue;
             }
 
