@@ -6,8 +6,8 @@ use Tcg\Common\Models\Product;
 
 class CommonPackingController
 {
-    private const DEFAULT_DIMENSION = 1;
     private const DEFAULT_MASS = 0.1;
+    private const DEFAULT_DIMENSION = 1;
 
     private $boxes;
 
@@ -109,7 +109,7 @@ class CommonPackingController
             }
         }
 
-        // Next, find any too-heavy items and set them aside
+        // Next, find any too-heavy items (no-dimensions) and set them aside
         $maxWeight = 0.0;
         foreach ($this->boxes as $box) {
             if (($box['max_weight'] ?? 0.0) > $maxWeight) {
@@ -165,6 +165,7 @@ class CommonPackingController
      */
     public function getMaxPackingConfiguration(array $box, array $itemDims): int
     {
+        $boxMaxWeight    = $box['max_weight'] ?? 0.0;
         $boxPermutations = [
             [0, 1, 2],
             [0, 2, 1],
@@ -182,10 +183,12 @@ class CommonPackingController
         }
         $maxItems = 0;
         foreach ($boxPermutations as $boxPermutation) {
-            $boxItems = (int)($box[0] / $itemDims[$boxPermutation[0]]);
-            $boxItems *= (int)($box[1] / $itemDims[$boxPermutation[1]]);
-            $boxItems *= (int)($box[2] / $itemDims[$boxPermutation[2]]);
-            $maxItems = max($maxItems, $boxItems);
+            $boxItems        = (int)($box[0] / $itemDims[$boxPermutation[0]]);
+            $boxItems        *= (int)($box[1] / $itemDims[$boxPermutation[1]]);
+            $boxItems        *= (int)($box[2] / $itemDims[$boxPermutation[2]]);
+            $boxMaxMassItems = $boxMaxWeight > 0.0 ? (int)floor($boxMaxWeight / $itemDims[3]) : $boxItems;
+            $boxItems        = min($boxItems, $boxMaxMassItems);
+            $maxItems        = max($maxItems, $boxItems);
         }
 
         return $maxItems;
@@ -203,19 +206,18 @@ class CommonPackingController
                 $item->dimension['length'] > 0.0 ? $item->dimension['length'] : self::DEFAULT_DIMENSION,
                 $item->dimension['width'] > 0.0 ? $item->dimension['width'] : self::DEFAULT_DIMENSION,
                 $item->dimension['height'] > 0.0 ? $item->dimension['height'] : self::DEFAULT_DIMENSION,
+                $item->dimension['mass'] > 0.0 ? $item->dimension['mass'] : self::DEFAULT_MASS
             ];
             $itemMass = $item->dimension['mass'] > 0.0 ? $item->dimension['mass'] : self::DEFAULT_MASS;
 
             foreach ($this->boxes as $key => $box) {
-                $maxByVolume       = self::getMaxPackingConfiguration($box, $itemDims);
-                $maxByWeight       = $box['max_weight'] > 0.0
-                    ? (int)floor($box['max_weight'] / $itemMass)
-                    : 0;
-                $fits[$key][$key1] = min($maxByVolume, $maxByWeight);
+                $maxByMassVolume   = self::getMaxPackingConfiguration($box, $itemDims);
+                $fits[$key][$key1] = $maxByMassVolume;
             }
         }
 
         $tcgPackages = [];
+        $k           = 0;
 
         if ($isContainer && $container !== null) {
             $container = unserialize(serialize($container));
@@ -247,7 +249,9 @@ class CommonPackingController
                     list($r2, $anyItemsLeft, $remainingItems) = $this->fitItemsInRealBoxes(
                         $remainingItems,
                         $fits,
-                        (int)$fitIndex
+                        (int)$fitIndex,
+                        $k,
+                        $tcgPackages
                     );
                     if ($r2 !== null) {
                         $results[] = $r2[0];
@@ -265,7 +269,6 @@ class CommonPackingController
         }
     }
 
-
     /**
      * @param array $items
      * @param array $fits
@@ -273,8 +276,11 @@ class CommonPackingController
      *
      * @return array|null
      */
-    public function fitItemsInRealBoxes(array $items, array $fits, int $boxndx = 0): ?array
-    {
+    public function fitItemsInRealBoxes(
+        array $items,
+        array $fits,
+        int $boxndx = 0,
+    ): ?array {
         $items1 = array_values($items);
 
         foreach ($fits as $fitKey => $fit) {
@@ -303,21 +309,17 @@ class CommonPackingController
             $entry['height']      = $box['dimension']['height'] ?? $box['height'];
             $entry['mass']        = 0.0;
             $entry['value']       = 0;
+            $entry['maxWeight']   = $box['max_weight'] ?? 0.0;
 
             // Calculate how many can be added
             $itemDims = [
                 $item->dimension['length'] > 0.0 ? $item->dimension['length'] : self::DEFAULT_DIMENSION,
                 $item->dimension['width'] > 0.0 ? $item->dimension['width'] : self::DEFAULT_DIMENSION,
                 $item->dimension['height'] > 0.0 ? $item->dimension['height'] : self::DEFAULT_DIMENSION,
+                $item->dimension['mass'] > 0.0 ? $item->dimension['mass'] : self::DEFAULT_MASS
             ];
             $maxItems = self::getMaxPackingConfiguration($box, $itemDims);
-            $itemMass = $this->resolveItemMassKg($item);
-            if (($box['max_weight'] ?? 0) > 0) {
-                // Never let volumetric fit alone decide how many go in - a box that
-                // fits N items by volume may still only carry fewer by weight.
-                $maxItems = min($maxItems, (int)floor($box['max_weight'] / $itemMass));
-            }
-            if ($maxItems <= 0) {
+            if ($maxItems === 0) {
                 return null;
             }
             $nItemsToAdd = min($maxItems, $item->quantity);
@@ -331,7 +333,7 @@ class CommonPackingController
             $vBoxes = self::getActualPackingConfigurationAdvanced($box, $itemDims, $nItemsToAdd);
             // There are up to three virtual boxes
             for ($vBoxi = 0; $vBoxi < count($vBoxes); $vBoxi++) {
-                $this->fitItemsInVbox($vBoxes[$vBoxi], $items1, $entry, (float)($box['max_weight'] ?? 0.0));
+                $this->fitItemsInVbox($vBoxes[$vBoxi], $items1, $entry);
             }
             break;
         }
@@ -459,7 +461,7 @@ class CommonPackingController
      *
      * @return void
      */
-    private function fitItemsInVbox($vbox, &$items1, &$entry, float $boxMaxWeight = 0.0)
+    private function fitItemsInVbox($vbox, &$items1, &$entry)
     {
         for ($itemi = 0; $itemi < count($items1); $itemi++) {
             $itemvb = $items1[$itemi];
@@ -468,24 +470,17 @@ class CommonPackingController
             }
 
             // Calculate how many can be added
-            $itemDims = [
+            $itemDims        = [
                 $itemvb->dimension['length'] > 0.0 ? $itemvb->dimension['length'] : self::DEFAULT_DIMENSION,
                 $itemvb->dimension['width'] > 0.0 ? $itemvb->dimension['width'] : self::DEFAULT_DIMENSION,
                 $itemvb->dimension['height'] > 0.0 ? $itemvb->dimension['height'] : self::DEFAULT_DIMENSION,
+                $itemvb->dimension['mass'] > 0.0 ? $itemvb->dimension['mass'] : self::DEFAULT_MASS
             ];
-            $maxItems = self::getMaxPackingConfiguration($vbox, $itemDims);
-            if ($maxItems == 0) {
-                continue;
-            }
-
-            $itemMass = $this->resolveItemMassKg($itemvb);
-            if ($boxMaxWeight > 0) {
-                // Cap by what's left of the physical box's weight budget, not just
-                // by the leftover volumetric space in this virtual box.
-                $remainingWeight = $boxMaxWeight - $entry['mass'];
-                $maxItems        = min($maxItems, (int)floor($remainingWeight / $itemMass));
-            }
-            if ($maxItems <= 0) {
+            $maxItems        = self::getMaxPackingConfiguration($vbox, $itemDims);
+            $availableWeight = $entry['maxWeight'] > 0.0 ? $entry['maxWeight'] - $entry['mass'] : 0.0;
+            $maxItemsByMass  = $availableWeight > 0.0 ? (int)floor($availableWeight / $itemDims[3]) : $maxItems;
+            $maxItems        = min($maxItems, $maxItemsByMass);
+            if ($maxItems === 0) {
                 continue;
             }
 
@@ -503,7 +498,7 @@ class CommonPackingController
             // Calculate the remaining vboxes content
             $vboxes = self::getActualPackingConfigurationAdvanced($vbox, $itemDims, $nitems);
             for ($vbi = 0; $vbi < count($vboxes); $vbi++) {
-                $this->fitItemsInVbox($vboxes[$vbi], $items1, $entry, $boxMaxWeight);
+                $this->fitItemsInVbox($vboxes[$vbi], $items1, $entry);
             }
             break;
         }
@@ -540,20 +535,5 @@ class CommonPackingController
     private function packVol(array $package): float
     {
         return (float)$package['length'] * (float)$package['width'] * (float)$package['height'];
-    }
-
-    /**
-     * Resolve an item's mass in kg, falling back to the Shopify variant weight,
-     * then to the default mass, so weight-based packing limits always have a
-     * usable (non-zero) figure to work with.
-     */
-    private function resolveItemMassKg(Product $item): float
-    {
-        $mass = $item->dimension['mass'] ?? 0.0;
-        if ($mass <= 0.0) {
-            $mass = self::DEFAULT_MASS;
-        }
-
-        return $mass;
     }
 }

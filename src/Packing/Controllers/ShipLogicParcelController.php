@@ -10,9 +10,6 @@ use Tcg\Common\Packing\Controllers\CommonPackingController;
 class ShipLogicParcelController
 {
     private array $boxes;
-
-    private const DEFAULT_DIMENSION = 1;
-    private const DEFAULT_MASS = 0.1;
     private array $fittingItems;
     private int $j;
     public CommonPackingController $commonPackingController;
@@ -127,7 +124,7 @@ class ShipLogicParcelController
     }
 
     /**
-     * Parcel up too-biig items
+     * Parcel up too-big items
      * They don't fit in boxes so have their own dimensions
      *
      * @param array $items
@@ -190,9 +187,6 @@ class ShipLogicParcelController
 
     /**
      * @param $massBased
-     * @param float $totalMass
-     * @param int $totalValue
-     * @param array $parcels
      *
      * @return array
      */
@@ -205,7 +199,7 @@ class ShipLogicParcelController
      * Calculate optimum packing into boxes based on product dimensions
      * Box weight limits are ignored in this
      *
-     * @param array $items
+     * @param array $fittingItems
      *
      * @return array
      */
@@ -221,316 +215,5 @@ class ShipLogicParcelController
 
         // Now the fitting items - use advanced algorithm
         return $this->commonPackingController->calculateMultiFittingItems($fittingItems);
-    }
-
-    /**
-     * Partition dimensioned items into those too big for any box and others
-     *
-     * @param array $items
-     *
-     * @return array
-     */
-    private function getFittingItems(array $items): array
-    {
-        $tooBigItems = [];
-        foreach ($items as $key => $item) {
-            $fits = $this->commonPackingController->getFitsIndex($item);
-            if ($fits === null) {
-                $tooBigItems[] = $item;
-                unset($items[$key]);
-            }
-        }
-        $items = array_values($items);
-
-        return [$tooBigItems, $items];
-    }
-
-    /**
-     * @param array $package
-     *
-     * @return float
-     */
-    private function packVol(array $package): float
-    {
-        return (float)$package['dim1'] * (float)$package['dim2'] * (float)$package['dim3'];
-    }
-
-    /**
-     * @param array $box
-     * @param array $pdims
-     *
-     * @return int
-     */
-    private static function getMaxPackingConfiguration(array $box, array $pdims): int
-    {
-        $boxPermutations = [
-            [0, 1, 2],
-            [0, 2, 1],
-            [1, 0, 2],
-            [1, 2, 0],
-            [2, 1, 0],
-            [2, 0, 1]
-        ];
-        if (isset($box['dimension'])) {
-            $box = array_values($box['dimension']);
-        }
-        $maxItems = 0;
-        foreach ($boxPermutations as $boxPermutation) {
-            $boxItems = (int)($box[0] / $pdims[$boxPermutation[0]]);
-            $boxItems *= (int)($box[1] / $pdims[$boxPermutation[1]]);
-            $boxItems *= (int)($box[2] / $pdims[$boxPermutation[2]]);
-            $maxItems = max($maxItems, $boxItems);
-        }
-
-        return $maxItems;
-    }
-
-    /**
-     * @param array $items
-     * @param array $fits
-     * @param int $boxndx
-     *
-     * @return array|null
-     */
-    private function fitItemsInRealBoxes(array $items, array $fits, int $boxndx = 0): ?array
-    {
-        $items1 = array_values($items);
-
-        foreach ($fits as $fitKey => $fit) {
-            if ((int)$fitKey < $boxndx) {
-                unset($fits[$fitKey]);
-            }
-        }
-        $j = $this->j;
-        $j++;
-        $entry  = [];
-        $boxKey = null;
-
-        for ($key = 0; $key < count($items1); $key++) {
-            $item = $items1[$key];
-            if ($item['quantity'] === 0) {
-                continue;
-            }
-            $slug                 = $key;
-            $boxKey               = !$boxKey ? $this->getBoxKey($fits, $slug, $item['quantity']) : $boxKey;
-            $box                  = $this->boxes[$boxKey];
-            $entry['item']        = $j;
-            $entry['description'] = $item['name'];
-            $entry['pieces']      = 1;
-            $entry['dim1']        = $box['dimension']['length'] ?? $box['length'];
-            $entry['dim2']        = $box['dimension']['width'] ?? $box['width'];
-            $entry['dim3']        = $box['dimension']['height'] ?? $box['height'];
-            $entry['actmass']     = 0.0;
-            $entry['value']       = 0;
-
-            // Calculate how many can be added
-            $pdims    = [
-                $item['dimension']['length'],
-                $item['dimension']['width'],
-                $item['dimension']['height'],
-            ];
-            $maxItems = self::getMaxPackingConfiguration($box, $pdims);
-            if ($maxItems === 0) {
-                return null;
-            }
-            $nItemsToAdd = min($maxItems, $item['quantity']);
-            // Put them into the box
-            $entry['value']         += $nItemsToAdd * $item->price;
-            $entry['actmass']       += $nItemsToAdd * ($item['mass'] ?? 0.1);
-            $items1[$key]->quantity -= $nItemsToAdd;
-
-            // Calculate the remaining boxes content
-            $vboxes = self::getActualPackingConfigurationAdvanced($box, $pdims, $nItemsToAdd);
-            // There are up to three virtual boxes
-            for ($vboxi = 0; $vboxi < count($vboxes); $vboxi++) {
-                $this->fitItemsInVbox($vboxes[$vboxi], $items1, $entry);
-            }
-            break;
-        }
-        $r2[]           = $entry;
-        $itemsRemaining = 0;
-        foreach ($items1 as $item1) {
-            $itemsRemaining += $item1['quantity'];
-        }
-        $anyItemsLeft = $itemsRemaining > 0;
-        $this->j      = $j;
-
-        return [$r2, $anyItemsLeft, array_values($items1)];
-    }
-
-    /**
-     * @param $fits
-     * @param $slug
-     * @param $itemCount
-     *
-     * @return int|string
-     */
-    private function getBoxKey($fits, $slug, $itemCount)
-    {
-        $fitsSlug = 0;
-        foreach ($fits as $key => $fit) {
-            $fitsSlug = $key;
-            if ($fit[$slug] >= $itemCount) {
-                break;
-            }
-        }
-
-        return $fitsSlug;
-    }
-
-    /**
-     * @param $box
-     * @param $item
-     * @param $count
-     *
-     * @return array
-     */
-    private static function getActualPackingConfigurationAdvanced($box, $item, $count): array
-    {
-        $boxPermutations = [
-            [0, 1, 2],
-            [0, 2, 1],
-            [1, 0, 2],
-            [1, 2, 0],
-            [2, 1, 0],
-            [2, 0, 1]
-        ];
-
-        if (isset($box['dimension'])) {
-            $boxLength = $box['dimension']['length'];
-            $boxWidth  = $box['dimension']['width'];
-            $boxHeight = $box['dimension']['height'];
-        } else {
-            $boxLength = $box[0];
-            $boxWidth  = $box[1];
-            $boxHeight = $box[2];
-        }
-
-        $usedHeight = $boxHeight;
-        $useds      = [];
-        foreach ($boxPermutations as $permutation) {
-            $nl = min($count, (int)($boxLength / $item[$permutation[0]]));
-            $nw = min($count, (int)($boxWidth / $item[$permutation[1]]));
-            $na = $nl * $nw;
-            $h  = 0;
-            if ($na !== 0) {
-                $h = ceil($count / $na) * $item[$permutation[2]];
-                if ($h <= $usedHeight) {
-                    $usedHeight = $h;
-                }
-            }
-            $useds[] = [$nl * $item[$permutation[0]], $nw * $item[$permutation[1]], $h];
-        }
-
-        $used = [];
-        foreach ($useds as $u) {
-            if (self::floatsAreEqual($u[2], $usedHeight)) {
-                $used = $u;
-                break;
-            }
-        }
-
-        $remainingBoxes = [];
-        if (!empty($used)) {
-            $vb1 = [$used[0], $used[1], $boxHeight - $used[2]];
-            rsort($vb1);
-            $vb1['volume'] = $vb1[0] * $vb1[1] * $vb1[2];
-            if ($vb1['volume'] > 0) {
-                $remainingBoxes[] = $vb1;
-            }
-
-            $vb2 = [$boxLength - $used[0], $boxWidth, $boxHeight];
-            rsort($vb2);
-            $vb2['volume'] = $vb2[0] * $vb2[1] * $vb2[2];
-            if ($vb2['volume'] > 0) {
-                $remainingBoxes[] = $vb2;
-            }
-
-            $vb3 = [
-                $boxLength,
-                $boxWidth - $used[1],
-                $boxHeight
-            ];
-            rsort($vb3);
-            $vb3['volume'] = $vb3[0] * $vb3[1] * $vb3[2];
-            if ($vb3['volume'] > 0) {
-                $remainingBoxes[] = $vb3;
-            }
-        }
-
-        return $remainingBoxes;
-    }
-
-    /**
-     * Calculate fit of items into virtual boxes
-     * Called recursively
-     *
-     * @param $vbox
-     * @param $items1
-     * @param $entry
-     *
-     * @return void
-     */
-    private function fitItemsInVbox($vbox, &$items1, &$entry)
-    {
-        for ($itemi = 0; $itemi < count($items1); $itemi++) {
-            $itemvb = $items1[$itemi];
-            if ($itemvb['quantity'] === 0) {
-                continue;
-            }
-
-            // Calculate how many can be added
-            $pdims    = [
-                $itemvb['dimension']['length'],
-                $itemvb['dimension']['width'],
-                $itemvb['dimension']['height'],
-            ];
-            $maxItems = self::getMaxPackingConfiguration($vbox, $pdims);
-            if ($maxItems == 0) {
-                continue;
-            }
-
-            // Else put items into this virtual box
-            $nitems = min(
-                $maxItems,
-                $itemvb['quantity']
-            );
-
-            $items1[$itemi]['quantity'] -= $nitems;
-            $entry['actmass']           += $nitems * ($itemvb['grams'] ?? 0) / 1000.0;
-            $entry['value']             += $nitems * (
-                    $itemvb['price'] ?? $itemvb['originalUnitPriceSet']['shopMoney']['amount']
-                );
-
-            // Calculate the remaining vboxes content
-            $vboxes = self::getActualPackingConfigurationAdvanced($vbox, $pdims, $nitems);
-            for ($vbi = 0; $vbi < count($vboxes); $vbi++) {
-                $this->fitItemsInVbox($vboxes[$vbi], $items1, $entry);
-            }
-            break;
-        }
-    }
-
-    private function sort1($a, $b)
-    {
-        if (count($a) === count($b)) {
-            $avol = 0.0;
-            foreach ($a as $value) {
-                $avol += $this->packVol($value);
-            }
-            $bvol = 0.0;
-            foreach ($b as $value) {
-                $bvol += $this->packVol($value);
-            }
-
-            return $avol <=> $bvol;
-        }
-
-        return count($a) <=> count($b);
-    }
-
-    private static function floatsAreEqual($a, $b): bool
-    {
-        return abs($a - $b) < 0.0001;
     }
 }
