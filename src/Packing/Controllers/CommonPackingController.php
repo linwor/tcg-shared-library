@@ -62,8 +62,7 @@ class CommonPackingController
 
     public function partitionItems(array $items, $containersEnabled = false): array
     {
-        $tooHeavyItems  = [];
-        $tooBigItems    = [];
+        $tooBigOrHeavyItems    = [];
         $singleItems    = [];
         $containerItems = [];
 
@@ -75,7 +74,7 @@ class CommonPackingController
             }
         }
 
-        // Next, find any dimensioned items that are too big for any box and set them aside
+        // Next, find any dimensioned items that are too big or heavy for any box and set them aside
         foreach ($items as $key => $item) {
             // Double check item dimensions are sorted
             $sizes = [$item->dimension['length'], $item->dimension['width'], $item->dimension['height']];
@@ -95,30 +94,15 @@ class CommonPackingController
                     if (
                         $item->dimension['length'] <= $box['length'] &&
                         $item->dimension['width'] <= $box['width'] &&
-                        $item->dimension['height'] <= $box['height']
+                        $item->dimension['height'] <= $box['height'] &&
+                        $item->dimension['mass'] <= ($box['max_weight'] ?? 0.0)
                     ) {
                         $fitsInBox = true;
                         break;
                     }
                 }
                 if (!$fitsInBox) {
-                    $tooBigItems[] = $item;
-                    unset($items[$key]);
-                }
-            }
-        }
-
-        // Next, find any too-heavy items (no-dimensions) and set them aside
-        $maxWeight = 0.0;
-        foreach ($this->boxes as $box) {
-            if (($box['max_weight'] ?? 0.0) > $maxWeight) {
-                $maxWeight = $box['max_weight'] ?? 0.0;
-            }
-        }
-        if ($maxWeight > 0) {
-            foreach ($items as $key => $item) {
-                if (($item->dimension['mass'] ?? 0.0) > $maxWeight) {
-                    $tooHeavyItems[] = $item;
+                    $tooBigOrHeavyItems[] = $item;
                     unset($items[$key]);
                 }
             }
@@ -141,7 +125,7 @@ class CommonPackingController
 
         // Whatever is left are dimensioned items that fit into at least one box
         // or items with no dimensions or mass (we will treat them as dimensioned items with a default mass in packing)
-        return [$tooHeavyItems, $tooBigItems, $singleItems, $containerItems, $items];
+        return [$tooBigOrHeavyItems, $singleItems, $containerItems, $items];
     }
 
     /**
@@ -329,7 +313,7 @@ class CommonPackingController
             ];
             $maxItems = self::getMaxPackingConfiguration($box, $itemDims);
             if ($maxItems === 0) {
-                return [null];
+                return [null, count($items1) > 0, array_values($items1)];
             }
             $nItemsToAdd = min($maxItems, $item->quantity);
             // Put them into the box
@@ -594,45 +578,14 @@ class CommonPackingController
     }
 
     /**
-     * Parcel up too-heavy items
+     * Parcel up too-big or too-heavy items
      * They don't fit in boxes so have their own dimensions
      *
      * @param array $items
      *
      * @return array
      */
-    public function packTooHeavyItems(array $items): array
-    {
-        $parcels = [];
-        if (empty($items)) {
-            return $parcels;
-        }
-        foreach ($items as $item) {
-            // pack as an individual parcel
-            for ($i = 0; $i < $item->quantity; $i++) {
-                $parcels[] = [
-                    'mass'        => $item->dimension['mass'] ?? 0.1,
-                    'value'       => $item->price,
-                    'length'      => (float)($item->dimension['length'] > 0.0 ? $item->dimension['length'] : 1.0),
-                    'width'       => (float)($item->dimension['width'] > 0.0 ? $item->dimension['width'] : 1.0),
-                    'height'      => (float)($item->dimension['height'] > 0.0 ? $item->dimension['height'] : 1.0),
-                    'description' => $item->description,
-                ];
-            }
-        }
-
-        return $parcels;
-    }
-
-    /**
-     * Parcel up too-big items
-     * They don't fit in boxes so have their own dimensions
-     *
-     * @param array $items
-     *
-     * @return array
-     */
-    public function packTooBigItems(array $items): array
+    public function packTooBigOrHeavyItems(array $items): array
     {
         $parcels = [];
         if (empty($items)) {
