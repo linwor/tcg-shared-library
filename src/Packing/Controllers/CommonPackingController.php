@@ -65,7 +65,6 @@ class CommonPackingController
         $tooHeavyItems  = [];
         $tooBigItems    = [];
         $singleItems    = [];
-        $massBased      = [];
         $containerItems = [];
 
         // First, set aside the configured single parcel items
@@ -140,21 +139,9 @@ class CommonPackingController
             }
         }
 
-        // Finally, set aside any items that are mass-based only (no dimensions but have mass)
-        foreach ($items as $key => $item) {
-            if (isset($item->dimension) && $item->dimension['volume'] > 0) {
-                continue;
-            }
-            if (isset($item->dimension) && $item->dimension['mass'] <= 0) {
-                continue;
-            }
-            $massBased[] = $item;
-            unset($items[$key]);
-        }
-
         // Whatever is left are dimensioned items that fit into at least one box
         // or items with no dimensions or mass (we will treat them as dimensioned items with a default mass in packing)
-        return [$tooHeavyItems, $tooBigItems, $singleItems, $massBased, $containerItems, $items];
+        return [$tooHeavyItems, $tooBigItems, $singleItems, $containerItems, $items];
     }
 
     /**
@@ -200,6 +187,30 @@ class CommonPackingController
             return [];
         }
         $fits = [];
+
+        usort($fittingItems, function ($b, $a) {
+            // We want to sort in descending order of size, so we compare $b to $a
+            $aLength = $a->dimension['length'] > 0.0 ? $a->dimension['length'] : self::DEFAULT_DIMENSION;
+            $aWidth  = $a->dimension['width'] > 0.0 ? $a->dimension['width'] : self::DEFAULT_DIMENSION;
+            $aHeight = $a->dimension['height'] > 0.0 ? $a->dimension['height'] : self::DEFAULT_DIMENSION;
+            $aMass   = $a->dimension['mass'] > 0.0 ? $a->dimension['mass'] : self::DEFAULT_MASS;
+
+            $bLength = $b->dimension['length'] > 0.0 ? $b->dimension['length'] : self::DEFAULT_DIMENSION;
+            $bWidth  = $b->dimension['width'] > 0.0 ? $b->dimension['width'] : self::DEFAULT_DIMENSION;
+            $bHeight = $b->dimension['height'] > 0.0 ? $b->dimension['height'] : self::DEFAULT_DIMENSION;
+            $bMass   = $b->dimension['mass'] > 0.0 ? $b->dimension['mass'] : self::DEFAULT_MASS;
+            if ($aLength !== $bLength) {
+                return $aLength <=> $bLength;
+            }
+            if ($aWidth !== $bWidth) {
+                return $aWidth <=> $bWidth;
+            }
+            if ($aHeight !== $bHeight) {
+                return $aHeight <=> $bHeight;
+            }
+
+            return $aMass <=> $bMass;
+        });
 
         foreach ($fittingItems as $key1 => $item) {
             $itemDims = [
@@ -249,9 +260,7 @@ class CommonPackingController
                     list($r2, $anyItemsLeft, $remainingItems) = $this->fitItemsInRealBoxes(
                         $remainingItems,
                         $fits,
-                        (int)$fitIndex,
-                        $k,
-                        $tcgPackages
+                        (int)$fitIndex
                     );
                     if ($r2 !== null) {
                         $results[] = $r2[0];
@@ -536,4 +545,173 @@ class CommonPackingController
     {
         return (float)$package['length'] * (float)$package['width'] * (float)$package['height'];
     }
+
+    // Packing of different types of items (dimensioned, too heavy, single parcel, container).
+    /**
+     * Parcel up single items
+     * They either fit into a box, or have their own dimensions
+     *
+     * @param array $items
+     *
+     * @return array
+     */
+    public function packSingleItems(array $items): array
+    {
+        $parcels = [];
+        if (empty($items)) {
+            return $parcels;
+        }
+        foreach ($items as $item) {
+            $fitsIndex = $this->commonPackingController->getFitsIndex($item);
+
+            // If it fits in a box pack into the box
+            if ($fitsIndex !== null) {
+                for ($i = 0; $i < $item->quantity; $i++) {
+                    $parcels[] = [
+                        'mass'   => $item->dimension['mass'] ?? 0.1, // default to 0.1 kg
+                        'value'  => $item->price,
+                        'length' => $this->boxes[$fitsIndex]['dimension']['length'],
+                        'width'  => $this->boxes[$fitsIndex]['dimension']['width'],
+                        'height' => $this->boxes[$fitsIndex]['dimension']['height'],
+                    ];
+                }
+            } else {
+                // pack as an individual parcel
+                for ($i = 0; $i < $item->quantity; $i++) {
+                    $parcels[] = [
+                        'mass'        => $item->dimension['mass'] ?? 0.1,
+                        'value'       => $item->price,
+                        'length'      => (float)($item->dimension['length'] > 0.0 ? $item->dimension['length'] : 1.0),
+                        'width'       => (float)($item->dimension['width'] > 0.0 ? $item->dimension['width'] : 1.0),
+                        'height'      => (float)($item->dimension['height'] > 0.0 ? $item->dimension['height'] : 1.0),
+                        'description' => $item->description,
+                    ];
+                }
+            }
+        }
+
+        return $parcels;
+    }
+
+    /**
+     * Parcel up too-heavy items
+     * They don't fit in boxes so have their own dimensions
+     *
+     * @param array $items
+     *
+     * @return array
+     */
+    public function packTooHeavyItems(array $items): array
+    {
+        $parcels = [];
+        if (empty($items)) {
+            return $parcels;
+        }
+        foreach ($items as $item) {
+            // pack as an individual parcel
+            for ($i = 0; $i < $item->quantity; $i++) {
+                $parcels[] = [
+                    'mass'        => $item->dimension['mass'] ?? 0.1,
+                    'value'       => $item->price,
+                    'length'      => (float)($item->dimension['length'] > 0.0 ? $item->dimension['length'] : 1.0),
+                    'width'       => (float)($item->dimension['width'] > 0.0 ? $item->dimension['width'] : 1.0),
+                    'height'      => (float)($item->dimension['height'] > 0.0 ? $item->dimension['height'] : 1.0),
+                    'description' => $item->description,
+                ];
+            }
+        }
+
+        return $parcels;
+    }
+
+    /**
+     * Parcel up too-big items
+     * They don't fit in boxes so have their own dimensions
+     *
+     * @param array $items
+     *
+     * @return array
+     */
+    public function packTooBigItems(array $items): array
+    {
+        $parcels = [];
+        if (empty($items)) {
+            return $parcels;
+        }
+        foreach ($items as $item) {
+            // pack as an individual parcel
+            for ($i = 0; $i < $item->quantity; $i++) {
+                $parcels[] = [
+                    'mass'        => $item->dimension['mass'] ?? 0.1,
+                    'value'       => $item->price,
+                    'length'      => (float)($item->dimension['length'] > 0.0 ? $item->dimension['length'] : 1.0),
+                    'width'       => (float)($item->dimension['width'] > 0.0 ? $item->dimension['width'] : 1.0),
+                    'height'      => (float)($item->dimension['height'] > 0.0 ? $item->dimension['height'] : 1.0),
+                    'description' => $item->description,
+                ];
+            }
+        }
+
+        return $parcels;
+    }
+
+    /**
+     * Calculate optimum packing into boxes based on product dimensions
+     * Box weight limits are ignored in this
+     *
+     * @param array $fittingItems
+     *
+     * @return array
+     */
+    public function packDimensionedItems(array $fittingItems): array
+    {
+        $parcels = [];
+
+        if (empty($fittingItems)) {
+            return $parcels;
+        }
+
+        $this->fittingItems = $fittingItems;
+
+        // Now the fitting items - use advanced algorithm
+        return $this->calculateMultiFittingItems($fittingItems);
+    }
+
+    /**
+     * @param array $containers
+     * @param array $fittingItems
+     *
+     * @return array
+     */
+    public function packContainers(array $containers, array $fittingItems): array
+    {
+        $packedContainers = [];
+
+        foreach ($containers as $container) {
+            if (empty($fittingItems)) {
+                $packedContainers[] = unserialize(serialize($container));
+                $fittingItems       = unserialize(serialize($fittingItems));
+            } else {
+                $containerDimension = $container->dimension;
+                unset($containerDimension['mass']);
+                unset($containerDimension['volume']);
+                $containerDimension = array_values($containerDimension);
+                rsort($containerDimension);
+                $containerDimension['volume'] = $containerDimension[0] * $containerDimension[1] * $containerDimension[2];
+                // Now we need to try and fit the other items into the container
+                $containerPackingController = new CommonPackingController([$container->dimension]);
+                [$packedContainer, $fittingItems] = $containerPackingController->calculateMultiFittingItems(
+                    $fittingItems,
+                    true,
+                    $container
+                );
+                $packedContainers[] = unserialize(serialize($packedContainer));
+                $fittingItems       = unserialize(serialize($fittingItems));
+            }
+        }
+
+
+        return [$packedContainers, $fittingItems];
+    }
+
 }
