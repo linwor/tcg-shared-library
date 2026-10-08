@@ -219,7 +219,6 @@ class CommonPackingController
                 $item->dimension['height'] > 0.0 ? $item->dimension['height'] : self::DEFAULT_DIMENSION,
                 $item->dimension['mass'] > 0.0 ? $item->dimension['mass'] : self::DEFAULT_MASS
             ];
-            $itemMass = $item->dimension['mass'] > 0.0 ? $item->dimension['mass'] : self::DEFAULT_MASS;
 
             foreach ($this->boxes as $key => $box) {
                 $maxByMassVolume   = self::getMaxPackingConfiguration($box, $itemDims);
@@ -228,7 +227,6 @@ class CommonPackingController
         }
 
         $tcgPackages = [];
-        $k           = 0;
 
         if ($isContainer && $container !== null) {
             $container = unserialize(serialize($container));
@@ -276,6 +274,8 @@ class CommonPackingController
 
             return $tcgPackages[0];
         }
+
+        return $tcgPackages;
     }
 
     /**
@@ -329,7 +329,7 @@ class CommonPackingController
             ];
             $maxItems = self::getMaxPackingConfiguration($box, $itemDims);
             if ($maxItems === 0) {
-                return null;
+                return [null];
             }
             $nItemsToAdd = min($maxItems, $item->quantity);
             // Put them into the box
@@ -562,7 +562,7 @@ class CommonPackingController
             return $parcels;
         }
         foreach ($items as $item) {
-            $fitsIndex = $this->commonPackingController->getFitsIndex($item);
+            $fitsIndex = $this->getFitsIndex($item);
 
             // If it fits in a box pack into the box
             if ($fitsIndex !== null) {
