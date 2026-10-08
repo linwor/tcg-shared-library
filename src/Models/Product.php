@@ -49,6 +49,15 @@ class Product
         $this->variantId = $variantId;
         $this->quantity  = $quantity;
         $this->dimension = $dimension ?? self::DEFAULT_DIMENSION;
+        if ($this->dimension['length'] <= 0) {
+            $this->dimension['length'] = self::DEFAULT_DIMENSION['length'];
+        }
+        if ($this->dimension['width'] <= 0) {
+            $this->dimension['width'] = self::DEFAULT_DIMENSION['width'];
+        }
+        if ($this->dimension['height'] <= 0) {
+            $this->dimension['height'] = self::DEFAULT_DIMENSION['height'];
+        }
         if ($this->dimension['mass'] <= 0) {
             $this->dimension['mass'] = self::DEFAULT_DIMENSION['mass'];
         }
