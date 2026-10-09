@@ -609,8 +609,7 @@ class CommonPackingController
     }
 
     /**
-     * Calculate optimum packing into boxes based on product dimensions
-     * Box weight limits are ignored in this
+     * Calculate optimum packing into boxes based on product dimensions and weight
      *
      * @param array $fittingItems
      *
