@@ -2,11 +2,6 @@
 
 namespace Tcg\Common\Packing\Controllers;
 
-use App\Http\Controllers\Controller;
-use App\Models\TcgService;
-use Illuminate\Http\Request;
-use Tcg\Common\Packing\Controllers\CommonPackingController;
-
 class ShipLogicParcelController
 {
     private array $boxes;
